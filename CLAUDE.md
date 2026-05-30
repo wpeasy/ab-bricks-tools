@@ -3,7 +3,7 @@
 ## Project Properties
 - **Plugin Name:** Bricks Tools
 - **Description:** A collection of Bricks Tools
-- **Version:** 0.0.1
+- **Version:** 0.0.2
 - **Minimum WordPress:** 6.5
 - **Minimum PHP:** 8.0
 - **PHP Namespace:** `AB\BricksTools`
