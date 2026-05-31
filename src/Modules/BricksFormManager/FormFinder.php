@@ -151,11 +151,16 @@ final class FormFinder
             replyToEmail:      $str('replyToEmail'),
             emailTo:           $str('emailTo'),
             emailCc:           $str('emailCc'),
-            emailSubject:      $str('emailSubject'),
-            successMessage:    $str('successMessage'),
-            emailErrorMessage: $str('emailErrorMessage'),
-            hasRedirectAction: !empty($r['hasRedirectAction']),
-            redirect:          $str('redirect'),
+            emailSubject:             $str('emailSubject'),
+            confirmationFromName:     $str('confirmationFromName'),
+            confirmationFromEmail:    $str('confirmationFromEmail'),
+            confirmationReplyToEmail: $str('confirmationReplyToEmail'),
+            confirmationEmailTo:      $str('confirmationEmailTo'),
+            confirmationEmailSubject: $str('confirmationEmailSubject'),
+            successMessage:           $str('successMessage'),
+            emailErrorMessage:        $str('emailErrorMessage'),
+            hasRedirectAction:        !empty($r['hasRedirectAction']),
+            redirect:                 $str('redirect'),
         );
     }
 }

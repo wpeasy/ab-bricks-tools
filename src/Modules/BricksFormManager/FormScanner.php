@@ -69,23 +69,31 @@ final class FormScanner
                 $hasRedirectAction = in_array('redirect', $actions, true);
 
                 $forms[] = [
-                    'postId'            => (int) $row->post_id,
-                    'postTitle'         => (string) ($row->post_title !== '' ? $row->post_title : '(no title)'),
-                    'postType'          => (string) $row->post_type,
-                    'postStatus'        => (string) $row->post_status,
-                    'metaKey'           => (string) $row->meta_key,
-                    'elementId'         => (string) ($element['id'] ?? ''),
-                    'formType'          => self::FORM_ELEMENT_NAMES[$name],
-                    'fromName'          => self::scalarToString($settings['fromName'] ?? null),
-                    'fromEmail'         => self::scalarToString($settings['fromEmail'] ?? null),
-                    'replyToEmail'      => self::scalarToString($settings['replyToEmail'] ?? null),
-                    'emailTo'           => self::scalarToString($settings['emailTo'] ?? null),
-                    'emailCc'           => self::scalarToString($settings['emailCc'] ?? null),
-                    'emailSubject'      => self::scalarToString($settings['emailSubject'] ?? null),
-                    'successMessage'    => self::scalarToString($settings['successMessage'] ?? null),
-                    'emailErrorMessage' => self::scalarToString($settings['emailErrorMessage'] ?? null),
-                    'hasRedirectAction' => $hasRedirectAction,
-                    'redirect'          => self::scalarToString($settings['redirect'] ?? null),
+                    'postId'                   => (int) $row->post_id,
+                    'postTitle'                => (string) ($row->post_title !== '' ? $row->post_title : '(no title)'),
+                    'postType'                 => (string) $row->post_type,
+                    'postStatus'               => (string) $row->post_status,
+                    'metaKey'                  => (string) $row->meta_key,
+                    'elementId'                => (string) ($element['id'] ?? ''),
+                    'formType'                 => self::FORM_ELEMENT_NAMES[$name],
+                    // Action Email (the primary email the form sends)
+                    'fromName'                 => self::scalarToString($settings['fromName'] ?? null),
+                    'fromEmail'                => self::scalarToString($settings['fromEmail'] ?? null),
+                    'replyToEmail'             => self::scalarToString($settings['replyToEmail'] ?? null),
+                    'emailTo'                  => self::scalarToString($settings['emailTo'] ?? null),
+                    'emailCc'                  => self::scalarToString($settings['emailCc'] ?? null),
+                    'emailSubject'             => self::scalarToString($settings['emailSubject'] ?? null),
+                    // Confirmation Email (sent to the submitter)
+                    'confirmationFromName'     => self::scalarToString($settings['confirmationFromName'] ?? null),
+                    'confirmationFromEmail'    => self::scalarToString($settings['confirmationFromEmail'] ?? null),
+                    'confirmationReplyToEmail' => self::scalarToString($settings['confirmationReplyToEmail'] ?? null),
+                    'confirmationEmailTo'      => self::scalarToString($settings['confirmationEmailTo'] ?? null),
+                    'confirmationEmailSubject' => self::scalarToString($settings['confirmationEmailSubject'] ?? null),
+                    // Response (post-submit)
+                    'successMessage'           => self::scalarToString($settings['successMessage'] ?? null),
+                    'emailErrorMessage'        => self::scalarToString($settings['emailErrorMessage'] ?? null),
+                    'hasRedirectAction'        => $hasRedirectAction,
+                    'redirect'                 => self::scalarToString($settings['redirect'] ?? null),
                 ];
             }
         }

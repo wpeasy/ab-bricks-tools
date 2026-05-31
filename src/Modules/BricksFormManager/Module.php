@@ -16,7 +16,12 @@ final class Module implements ModuleInterface, HasAdminPage
     public const REST_ROUTE_SAVE = '/bricks-form-manager/form';
 
     private const SAVE_TEXT_FIELDS = [
+        // Action Email
         'fromName', 'fromEmail', 'replyToEmail', 'emailTo', 'emailCc', 'emailSubject',
+        // Confirmation Email
+        'confirmationFromName', 'confirmationFromEmail', 'confirmationReplyToEmail',
+        'confirmationEmailTo', 'confirmationEmailSubject',
+        // Other
         'redirect',
     ];
 
@@ -94,12 +99,17 @@ final class Module implements ModuleInterface, HasAdminPage
                 'replyToEmail'      => $f->replyToEmail,
                 'emailTo'           => $f->emailTo,
                 'emailCc'           => $f->emailCc,
-                'emailSubject'      => $f->emailSubject,
-                'successMessage'    => $f->successMessage,
-                'emailErrorMessage' => $f->emailErrorMessage,
-                'hasRedirectAction' => $f->hasRedirectAction,
-                'redirect'          => $f->redirect,
-                'editUrl'           => self::buildBricksBuilderUrl($f->postId),
+                'emailSubject'             => $f->emailSubject,
+                'confirmationFromName'     => $f->confirmationFromName,
+                'confirmationFromEmail'    => $f->confirmationFromEmail,
+                'confirmationReplyToEmail' => $f->confirmationReplyToEmail,
+                'confirmationEmailTo'      => $f->confirmationEmailTo,
+                'confirmationEmailSubject' => $f->confirmationEmailSubject,
+                'successMessage'           => $f->successMessage,
+                'emailErrorMessage'        => $f->emailErrorMessage,
+                'hasRedirectAction'        => $f->hasRedirectAction,
+                'redirect'                 => $f->redirect,
+                'editUrl'                  => self::buildBricksBuilderUrl($f->postId),
             ];
         }, $forms);
 
@@ -307,20 +317,34 @@ final class Module implements ModuleInterface, HasAdminPage
                             />
                         </label>
                         <span class="abbtl-bfm__toolbar-count" x-text="filteredForms.length + ' / ' + forms.length"></span>
+                        <label class="abbtl-bfm__toolbar-field abbtl-bfm__toolbar-toggle">
+                            <input type="checkbox" x-model="showConfirmation" />
+                            <span><?php esc_html_e('Show Confirmation Email columns', 'ab-bricks-tools'); ?></span>
+                        </label>
                     </div>
 
                     <div class="abbtl-bfm__table-wrap">
                         <table class="wp-list-table widefat striped abbtl-bfm__table">
                             <thead>
+                                <tr class="abbtl-bfm__group-row">
+                                    <th scope="col" rowspan="2" class="abbtl-bfm__sticky-col"><?php esc_html_e('Form', 'ab-bricks-tools'); ?></th>
+                                    <th scope="col" rowspan="2"><?php esc_html_e('Type', 'ab-bricks-tools'); ?></th>
+                                    <th scope="colgroup" colspan="6" class="abbtl-bfm__group abbtl-bfm__group--action"><?php esc_html_e('Action Email', 'ab-bricks-tools'); ?></th>
+                                    <th scope="colgroup" colspan="5" class="abbtl-bfm__group abbtl-bfm__group--confirmation abbtl-bfm__conf-col" :class="{ 'is-hidden': !showConfirmation }"><?php esc_html_e('Confirmation Email', 'ab-bricks-tools'); ?></th>
+                                    <th scope="colgroup" colspan="3" class="abbtl-bfm__group abbtl-bfm__group--response"><?php esc_html_e('Response', 'ab-bricks-tools'); ?></th>
+                                </tr>
                                 <tr>
-                                    <th scope="col"><?php esc_html_e('Form', 'ab-bricks-tools'); ?></th>
-                                    <th scope="col"><?php esc_html_e('Type', 'ab-bricks-tools'); ?></th>
                                     <th scope="col"><?php esc_html_e('From Name', 'ab-bricks-tools'); ?></th>
                                     <th scope="col"><?php esc_html_e('From Email', 'ab-bricks-tools'); ?></th>
                                     <th scope="col"><?php esc_html_e('Reply To', 'ab-bricks-tools'); ?></th>
                                     <th scope="col"><?php esc_html_e('To', 'ab-bricks-tools'); ?></th>
                                     <th scope="col"><?php esc_html_e('CC', 'ab-bricks-tools'); ?></th>
                                     <th scope="col"><?php esc_html_e('Subject', 'ab-bricks-tools'); ?></th>
+                                    <th scope="col" class="abbtl-bfm__conf-col" :class="{ 'is-hidden': !showConfirmation }"><?php esc_html_e('From Name', 'ab-bricks-tools'); ?></th>
+                                    <th scope="col" class="abbtl-bfm__conf-col" :class="{ 'is-hidden': !showConfirmation }"><?php esc_html_e('From Email', 'ab-bricks-tools'); ?></th>
+                                    <th scope="col" class="abbtl-bfm__conf-col" :class="{ 'is-hidden': !showConfirmation }"><?php esc_html_e('Reply To', 'ab-bricks-tools'); ?></th>
+                                    <th scope="col" class="abbtl-bfm__conf-col" :class="{ 'is-hidden': !showConfirmation }"><?php esc_html_e('To', 'ab-bricks-tools'); ?></th>
+                                    <th scope="col" class="abbtl-bfm__conf-col" :class="{ 'is-hidden': !showConfirmation }"><?php esc_html_e('Subject', 'ab-bricks-tools'); ?></th>
                                     <th scope="col"><?php esc_html_e('Success Message', 'ab-bricks-tools'); ?></th>
                                     <th scope="col"><?php esc_html_e('Error Message', 'ab-bricks-tools'); ?></th>
                                     <th scope="col"><?php esc_html_e('Redirect URL', 'ab-bricks-tools'); ?></th>
@@ -329,7 +353,7 @@ final class Module implements ModuleInterface, HasAdminPage
                             <tbody>
                                 <template x-for="form in filteredForms" :key="formKey(form)">
                                     <tr>
-                                        <td>
+                                        <td class="abbtl-bfm__sticky-col">
                                             <strong>
                                                 <a :href="form.editUrl" target="_blank" rel="noopener noreferrer" x-text="form.postTitle"></a>
                                             </strong>
@@ -346,6 +370,11 @@ final class Module implements ModuleInterface, HasAdminPage
                                         <?php echo $this->renderEditableCell('emailTo'); ?>
                                         <?php echo $this->renderEditableCell('emailCc'); ?>
                                         <?php echo $this->renderEditableCell('emailSubject'); ?>
+                                        <?php echo $this->renderEditableCell('confirmationFromName',     false, null, true); ?>
+                                        <?php echo $this->renderEditableCell('confirmationFromEmail',    false, null, true); ?>
+                                        <?php echo $this->renderEditableCell('confirmationReplyToEmail', false, null, true); ?>
+                                        <?php echo $this->renderEditableCell('confirmationEmailTo',      false, null, true); ?>
+                                        <?php echo $this->renderEditableCell('confirmationEmailSubject', false, null, true); ?>
                                         <?php echo $this->renderEditableCell('successMessage', true); ?>
                                         <?php echo $this->renderEditableCell('emailErrorMessage', true); ?>
                                         <?php echo $this->renderEditableCell('redirect', false, 'hasRedirectAction'); ?>
@@ -382,6 +411,29 @@ final class Module implements ModuleInterface, HasAdminPage
                         typeFilter: 'all',
                         emailSearch: '',
                         editing: null,
+                        showConfirmation: false,
+
+                        init() {
+                            this.loadShowConfirmationPref();
+                            this.$watch('showConfirmation', () => this.saveShowConfirmationPref());
+                        },
+
+                        loadShowConfirmationPref() {
+                            try {
+                                const stored = localStorage.getItem('abbtl_bfm_show_confirmation');
+                                if (stored !== null) this.showConfirmation = stored === '1';
+                            } catch (e) {
+                                // localStorage may be disabled
+                            }
+                        },
+
+                        saveShowConfirmationPref() {
+                            try {
+                                localStorage.setItem('abbtl_bfm_show_confirmation', this.showConfirmation ? '1' : '0');
+                            } catch (e) {
+                                // ignore
+                            }
+                        },
 
                         get filteredForms() {
                             const needle = (this.emailSearch || '').trim().toLowerCase();
@@ -502,8 +554,12 @@ final class Module implements ModuleInterface, HasAdminPage
      * If $conditionField is supplied, the cell is only editable when
      * `form[$conditionField]` is truthy — otherwise it renders a plain
      * non-editable "NA" placeholder.
+     *
+     * $isConfirmation marks the cell as part of the Confirmation Email
+     * group: it gets the `abbtl-bfm__conf-col` static class plus a
+     * reactive `is-hidden` binding tied to the showConfirmation toggle.
      */
-    private function renderEditableCell(string $fieldKey, bool $multiline = false, ?string $conditionField = null): string
+    private function renderEditableCell(string $fieldKey, bool $multiline = false, ?string $conditionField = null, bool $isConfirmation = false): string
     {
         $fieldAttr = esc_attr($fieldKey);
         $fieldJs   = esc_js($fieldKey);
@@ -533,10 +589,13 @@ final class Module implements ModuleInterface, HasAdminPage
         <?php
         $editableInner = (string) ob_get_clean();
 
+        $confClass   = $isConfirmation ? ' abbtl-bfm__conf-col' : '';
+        $confBinding = $isConfirmation ? ' :class="{ \'is-hidden\': !showConfirmation }"' : '';
+
         ob_start();
         if ($conditionField === null) {
             ?>
-            <td class="abbtl-bfm__cell" @dblclick="startEdit(form, '<?php echo $fieldAttr; ?>')">
+            <td class="abbtl-bfm__cell<?php echo $confClass; ?>"<?php echo $confBinding; ?> @dblclick="startEdit(form, '<?php echo $fieldAttr; ?>')">
                 <?php echo $editableInner; ?>
             </td>
             <?php
@@ -545,12 +604,12 @@ final class Module implements ModuleInterface, HasAdminPage
             $condJs   = esc_js($conditionField);
             ?>
             <template x-if="form.<?php echo $condJs; ?>">
-                <td class="abbtl-bfm__cell" @dblclick="startEdit(form, '<?php echo $fieldAttr; ?>')">
+                <td class="abbtl-bfm__cell<?php echo $confClass; ?>"<?php echo $confBinding; ?> @dblclick="startEdit(form, '<?php echo $fieldAttr; ?>')">
                     <?php echo $editableInner; ?>
                 </td>
             </template>
             <template x-if="!form.<?php echo $condJs; ?>">
-                <td class="abbtl-bfm__cell abbtl-bfm__cell--na">
+                <td class="abbtl-bfm__cell abbtl-bfm__cell--na<?php echo $confClass; ?>"<?php echo $confBinding; ?>>
                     <span class="abbtl-bfm__na" title="<?php echo esc_attr__('Not applicable — enable this form\'s redirect action in Bricks to edit', 'ab-bricks-tools'); ?>">NA</span>
                 </td>
             </template>

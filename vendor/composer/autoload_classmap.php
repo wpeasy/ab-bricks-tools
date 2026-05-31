@@ -8,7 +8,9 @@ $baseDir = dirname($vendorDir);
 return array(
     'AB\\BricksTools\\Admin\\AdminPage' => $baseDir . '/src/Admin/AdminPage.php',
     'AB\\BricksTools\\Admin\\Layout' => $baseDir . '/src/Admin/Layout.php',
+    'AB\\BricksTools\\Modules\\BricksClassVariableFinder\\Bem' => $baseDir . '/src/Modules/BricksClassVariableFinder/Bem.php',
     'AB\\BricksTools\\Modules\\BricksClassVariableFinder\\Module' => $baseDir . '/src/Modules/BricksClassVariableFinder/Module.php',
+    'AB\\BricksTools\\Modules\\BricksClassVariableFinder\\RevisionStore' => $baseDir . '/src/Modules/BricksClassVariableFinder/RevisionStore.php',
     'AB\\BricksTools\\Modules\\BricksClassVariableFinder\\TargetCatalog' => $baseDir . '/src/Modules/BricksClassVariableFinder/TargetCatalog.php',
     'AB\\BricksTools\\Modules\\BricksClassVariableFinder\\Usage' => $baseDir . '/src/Modules/BricksClassVariableFinder/Usage.php',
     'AB\\BricksTools\\Modules\\BricksClassVariableFinder\\UsageFinder' => $baseDir . '/src/Modules/BricksClassVariableFinder/UsageFinder.php',

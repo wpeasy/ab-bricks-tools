@@ -17,6 +17,9 @@ final class Module implements ModuleInterface, HasAdminPage
     public const REST_ROUTE_SAVE_LABEL       = '/class-variable-finder/element-label';
     public const REST_ROUTE_SAVE_ELEMENT_CLS = '/class-variable-finder/element-classes';
     public const REST_ROUTE_RENAME_CLASS     = '/class-variable-finder/rename-class';
+    public const REST_ROUTE_REVISIONS_LIST    = '/class-variable-finder/revisions';
+    public const REST_ROUTE_REVISIONS_RESTORE = '/class-variable-finder/revisions/restore';
+    public const REST_ROUTE_REVISIONS_LATEST  = '/class-variable-finder/revisions/latest';
 
     public function getSlug(): string
     {
@@ -44,6 +47,48 @@ final class Module implements ModuleInterface, HasAdminPage
     public function boot(): void
     {
         add_action('rest_api_init', [$this, 'registerRestRoutes']);
+
+        // Snapshot every change to the source options so we can offer
+        // restore. Captures Bricks Style Manager edits AND our own rename
+        // endpoint.  $oldValue is the value BEFORE this update (i.e. the
+        // state we'd want to restore to). The static `$restoring` flag
+        // suppresses snapshots while a restore is in flight.
+        add_action('update_option_bricks_global_classes', [$this, 'onClassesOptionUpdate'], 10, 2);
+        add_action('update_option_bricks_global_variables', [$this, 'onVariablesOptionUpdate'], 10, 2);
+    }
+
+    /**
+     * @param mixed $oldValue
+     * @param mixed $newValue
+     */
+    public function onClassesOptionUpdate($oldValue, $newValue): void
+    {
+        if (serialize($oldValue) === serialize($newValue)) {
+            return;
+        }
+        $summary = RevisionStore::summarize(RevisionStore::KIND_CLASSES, $oldValue, $newValue);
+        RevisionStore::add(
+            RevisionStore::KIND_CLASSES,
+            is_array($oldValue) ? $oldValue : [],
+            $summary
+        );
+    }
+
+    /**
+     * @param mixed $oldValue
+     * @param mixed $newValue
+     */
+    public function onVariablesOptionUpdate($oldValue, $newValue): void
+    {
+        if (serialize($oldValue) === serialize($newValue)) {
+            return;
+        }
+        $summary = RevisionStore::summarize(RevisionStore::KIND_VARIABLES, $oldValue, $newValue);
+        RevisionStore::add(
+            RevisionStore::KIND_VARIABLES,
+            is_array($oldValue) ? $oldValue : [],
+            $summary
+        );
     }
 
     public function registerRestRoutes(): void
@@ -95,9 +140,115 @@ final class Module implements ModuleInterface, HasAdminPage
             // Global rename mutates wp_options site-wide — site-admin only.
             'permission_callback' => static fn () => current_user_can('manage_options'),
             'args'                => [
-                'classId' => ['required' => true, 'type' => 'string'],
-                'name'    => ['required' => true, 'type' => 'string'],
+                'classId'           => ['required' => true,  'type' => 'string'],
+                'name'              => ['required' => true,  'type' => 'string'],
+                'bemPropagateBlock' => ['required' => false, 'type' => 'boolean', 'default' => false],
+                'bemRenameLabels'   => ['required' => false, 'type' => 'boolean', 'default' => false],
+                'dryRun'            => ['required' => false, 'type' => 'boolean', 'default' => false],
             ],
+        ]);
+
+        register_rest_route('abbtl/v1', self::REST_ROUTE_REVISIONS_LIST, [
+            'methods'             => WP_REST_Server::READABLE,
+            'callback'            => [$this, 'restListRevisions'],
+            'permission_callback' => static fn () => current_user_can('manage_options'),
+            'args'                => [
+                'kind' => ['required' => true, 'type' => 'string'],
+            ],
+        ]);
+
+        register_rest_route('abbtl/v1', self::REST_ROUTE_REVISIONS_RESTORE, [
+            'methods'             => WP_REST_Server::EDITABLE,
+            'callback'            => [$this, 'restRestoreRevision'],
+            'permission_callback' => static fn () => current_user_can('manage_options'),
+            'args'                => [
+                'kind'       => ['required' => true, 'type' => 'string'],
+                'revisionId' => ['required' => true, 'type' => 'string'],
+            ],
+        ]);
+
+        register_rest_route('abbtl/v1', self::REST_ROUTE_REVISIONS_LATEST, [
+            'methods'             => WP_REST_Server::READABLE,
+            'callback'            => [$this, 'restLatestRevision'],
+            'permission_callback' => static fn () => current_user_can('manage_options'),
+        ]);
+    }
+
+    /**
+     * Single revision lookup with optional cursor bounds:
+     *  - no params       → absolute newest (used as the first Ctrl+Z hop)
+     *  - ?before=<ts>    → newest with ts < before (next Ctrl+Z hop back)
+     *  - ?after=<ts>     → oldest with ts > after  (next Ctrl+R hop forward)
+     */
+    public function restLatestRevision(WP_REST_Request $request): WP_REST_Response
+    {
+        $beforeRaw = $request->get_param('before');
+        $afterRaw  = $request->get_param('after');
+        $beforeTs  = is_numeric($beforeRaw) ? (int) $beforeRaw : null;
+        $afterTs   = is_numeric($afterRaw)  ? (int) $afterRaw  : null;
+
+        $latest = RevisionStore::latest($beforeTs, $afterTs);
+        if ($latest === null) {
+            return new WP_REST_Response([
+                'success' => true,
+                'kind'    => null,
+                'id'      => null,
+            ]);
+        }
+        $entry = $latest['entry'];
+        return new WP_REST_Response([
+            'success' => true,
+            'kind'    => $latest['kind'],
+            'id'      => (string) ($entry['id']      ?? ''),
+            'ts'      => (int)    ($entry['ts']      ?? 0),
+            'summary' => (string) ($entry['summary'] ?? ''),
+        ]);
+    }
+
+    public function restListRevisions(WP_REST_Request $request): WP_REST_Response
+    {
+        $kind = (string) $request->get_param('kind');
+        if (!RevisionStore::isValidKind($kind)) {
+            return new WP_REST_Response(['success' => false, 'error' => 'Invalid kind'], 400);
+        }
+        $list   = RevisionStore::getAll($kind);
+        $format = get_option('date_format', 'F j, Y') . ' ' . get_option('time_format', 'g:i a');
+
+        $data = array_map(static function (array $entry) use ($format): array {
+            $ts = (int) ($entry['ts'] ?? 0);
+            return [
+                'id'      => (string) ($entry['id'] ?? ''),
+                'ts'      => $ts,
+                'when'    => $ts > 0 ? wp_date($format, $ts) : '',
+                'summary' => (string) ($entry['summary'] ?? ''),
+            ];
+        }, $list);
+
+        return new WP_REST_Response(['revisions' => $data]);
+    }
+
+    public function restRestoreRevision(WP_REST_Request $request): WP_REST_Response
+    {
+        $kind       = (string) $request->get_param('kind');
+        $revisionId = (string) $request->get_param('revisionId');
+
+        if (!RevisionStore::isValidKind($kind)) {
+            return new WP_REST_Response(['success' => false, 'error' => 'Invalid kind'], 400);
+        }
+        if ($revisionId === '') {
+            return new WP_REST_Response(['success' => false, 'error' => 'Missing revisionId'], 400);
+        }
+
+        $ts = RevisionStore::restore($kind, $revisionId);
+        if ($ts === null) {
+            return new WP_REST_Response(['success' => false, 'error' => 'Revision not found'], 404);
+        }
+
+        return new WP_REST_Response([
+            'success' => true,
+            'kind'    => $kind,
+            'id'      => $revisionId,
+            'ts'      => $ts,
         ]);
     }
 
@@ -207,22 +358,22 @@ final class Module implements ModuleInterface, HasAdminPage
     }
 
     /**
-     * Rename a global class in the `bricks_global_classes` option. Affects
-     * every element on the site that references this class id — site-admin
-     * capability is required.
+     * Rename a global class in `bricks_global_classes`, optionally
+     * propagating to BEM siblings and rewriting matching element labels.
      */
     public function restRenameClass(WP_REST_Request $request): WP_REST_Response
     {
-        $classId = (string) $request->get_param('classId');
-        $rawName = (string) $request->get_param('name');
+        $classId        = (string) $request->get_param('classId');
+        $rawName        = (string) $request->get_param('name');
+        $propagateBlock = (bool) $request->get_param('bemPropagateBlock');
+        $renameLabels   = (bool) $request->get_param('bemRenameLabels');
+        $dryRun         = (bool) $request->get_param('dryRun');
 
         $cleaned = sanitize_text_field($rawName);
         if ($cleaned === '') {
             return new WP_REST_Response(['success' => false, 'error' => 'Class name cannot be empty'], 400);
         }
-        // Valid CSS-identifier-ish: must start with letter or underscore,
-        // continue with letters, digits, hyphen, or underscore.
-        if (!preg_match('/^[A-Za-z_][A-Za-z0-9_-]*$/', $cleaned)) {
+        if (!self::isValidClassName($cleaned)) {
             return new WP_REST_Response(['success' => false, 'error' => 'Invalid class name format'], 400);
         }
 
@@ -231,39 +382,284 @@ final class Module implements ModuleInterface, HasAdminPage
             return new WP_REST_Response(['success' => false, 'error' => 'No global classes found'], 404);
         }
 
-        // Refuse if the new name collides with another existing class.
+        // Locate the source class.
+        $oldName = null;
         foreach ($classes as $c) {
-            if (is_array($c) && ($c['name'] ?? null) === $cleaned && ($c['id'] ?? null) !== $classId) {
-                return new WP_REST_Response(['success' => false, 'error' => 'A class with that name already exists'], 409);
+            if (is_array($c) && ($c['id'] ?? null) === $classId) {
+                $oldName = (string) ($c['name'] ?? '');
+                break;
+            }
+        }
+        if ($oldName === null) {
+            return new WP_REST_Response(['success' => false, 'error' => 'Class not found'], 404);
+        }
+
+        if ($oldName === $cleaned) {
+            return new WP_REST_Response([
+                'success'       => true,
+                'dryRun'        => $dryRun,
+                'classId'       => $classId,
+                'name'          => $cleaned,
+                'renamed'       => [['id' => $classId, 'oldName' => $oldName, 'newName' => $cleaned]],
+                'labelChanges'  => [],
+                'labelsUpdated' => 0,
+            ]);
+        }
+
+        // Build the rename map: id => [oldName, newName]. The user's explicit
+        // rename always wins for the focused class.
+        $renameMap = [$classId => [$oldName, $cleaned]];
+
+        // Propagation rule: if the BEM Block segment changed (regardless of
+        // whether the focused class is element-only, block-only, or has a
+        // modifier), rewrite the block prefix on every class in that family
+        // and keep each sibling's own Element/Modifier portions intact.
+        $oldParsed = Bem::parse($oldName);
+        $newParsed = Bem::parse($cleaned);
+        $shouldPropagate = $propagateBlock
+            && $oldParsed !== null
+            && $newParsed !== null
+            && $oldParsed['block'] !== $newParsed['block'];
+
+        if ($shouldPropagate) {
+            $oldBlock = $oldParsed['block'];
+            $newBlock = $newParsed['block'];
+
+            foreach (Bem::findBlockFamilyClassIds($oldBlock, $classes) as $rid) {
+                if ($rid === $classId) {
+                    continue; // user's explicit rename already in the map
+                }
+                $relCls = null;
+                foreach ($classes as $c) {
+                    if (is_array($c) && ($c['id'] ?? null) === $rid) {
+                        $relCls = $c;
+                        break;
+                    }
+                }
+                if ($relCls === null) {
+                    continue;
+                }
+                $relOld = (string) ($relCls['name'] ?? '');
+                if ($relOld === '' || strpos($relOld, $oldBlock) !== 0) {
+                    continue;
+                }
+                // Replace just the leading block prefix with the new block.
+                $relNew = $newBlock . substr($relOld, strlen($oldBlock));
+                if (!self::isValidClassName($relNew)) {
+                    return new WP_REST_Response([
+                        'success' => false,
+                        'error'   => 'Propagated rename would produce an invalid class name: ' . $relNew,
+                    ], 400);
+                }
+                $renameMap[$rid] = [$relOld, $relNew];
             }
         }
 
-        $found = false;
+        // Collision detection against any existing class NOT in the rename map.
+        $newNamesByExistingId = [];
+        foreach ($classes as $c) {
+            if (!is_array($c) || !isset($c['id'], $c['name'])) {
+                continue;
+            }
+            if (isset($renameMap[$c['id']])) {
+                continue;
+            }
+            $newNamesByExistingId[(string) $c['name']] = (string) $c['id'];
+        }
+        $collisions = [];
+        foreach ($renameMap as [$relOld, $relNew]) {
+            if (isset($newNamesByExistingId[$relNew])) {
+                $collisions[] = $relNew;
+            }
+        }
+        if ($collisions !== []) {
+            return new WP_REST_Response([
+                'success'    => false,
+                'error'      => 'A class with one of those names already exists: ' . implode(', ', array_unique($collisions)),
+                'collisions' => array_values(array_unique($collisions)),
+            ], 409);
+        }
+
+        $renamedList = [];
+        foreach ($renameMap as $rid => [$ol, $nn]) {
+            $renamedList[] = ['id' => $rid, 'oldName' => $ol, 'newName' => $nn];
+        }
+
+        // Dry-run: gather the label-change plan WITHOUT writing anything.
+        if ($dryRun) {
+            $labelPlan = $renameLabels ? $this->processElementLabels($renameMap, false) : [];
+            return new WP_REST_Response([
+                'success'       => true,
+                'dryRun'        => true,
+                'classId'       => $classId,
+                'name'          => $cleaned,
+                'renamed'       => $renamedList,
+                'labelChanges'  => $labelPlan,
+                'labelsUpdated' => 0,
+            ]);
+        }
+
+        // Apply renames in a single update_option (single snapshot).
+        $now = time();
         foreach ($classes as &$class) {
             if (!is_array($class)) {
                 continue;
             }
-            if (($class['id'] ?? null) !== $classId) {
+            $cid = $class['id'] ?? null;
+            if (!is_string($cid) || !isset($renameMap[$cid])) {
                 continue;
             }
-            $class['name']     = $cleaned;
-            $class['modified'] = time();
-            $found             = true;
-            break;
+            $class['name']     = $renameMap[$cid][1];
+            $class['modified'] = $now;
         }
         unset($class);
 
-        if (!$found) {
-            return new WP_REST_Response(['success' => false, 'error' => 'Class not found'], 404);
-        }
-
         update_option('bricks_global_classes', $classes);
 
+        $labelChanges = $renameLabels ? $this->processElementLabels($renameMap, true) : [];
+
         return new WP_REST_Response([
-            'success' => true,
-            'classId' => $classId,
-            'name'    => $cleaned,
+            'success'       => true,
+            'dryRun'        => false,
+            'classId'       => $classId,
+            'name'          => $cleaned,
+            'renamed'       => $renamedList,
+            'labelChanges'  => $labelChanges,
+            'labelsUpdated' => count($labelChanges),
         ]);
+    }
+
+    private static function isValidClassName(string $name): bool
+    {
+        return (bool) preg_match('/^[A-Za-z_][A-Za-z0-9_-]*$/', $name);
+    }
+
+    /**
+     * Walk every Bricks postmeta entry (latest version per post + family),
+     * find elements using any class in the rename map whose label matches
+     * the OLD class-derived label, and either gather (plan) or apply the
+     * label rewrites depending on $apply.
+     *
+     * @param array<string, array{0:string,1:string}> $renameMap classId => [oldName, newName]
+     * @return list<array{postId:int, postTitle:string, elementId:string, elementLabel:?string, oldLabel:string, newLabel:string}>
+     */
+    private function processElementLabels(array $renameMap, bool $apply): array
+    {
+        global $wpdb;
+
+        $rows = $wpdb->get_results($wpdb->prepare(
+            "SELECT pm.post_id, pm.meta_key, pm.meta_value, p.post_title, p.post_type, p.post_status
+             FROM {$wpdb->postmeta} pm
+             INNER JOIN {$wpdb->posts} p ON p.ID = pm.post_id
+             WHERE (pm.meta_key LIKE %s OR pm.meta_key LIKE %s OR pm.meta_key LIKE %s)
+               AND p.post_type != 'revision'
+               AND p.post_status NOT IN ('trash', 'auto-draft')",
+            $wpdb->esc_like('_bricks_page_content') . '%',
+            $wpdb->esc_like('_bricks_page_header') . '%',
+            $wpdb->esc_like('_bricks_page_footer') . '%'
+        ));
+
+        if (!$rows) {
+            return [];
+        }
+
+        // Group by post + family, keep the highest-versioned key per group.
+        $best = [];
+        foreach ($rows as $row) {
+            if (!preg_match('/^_bricks_page_(content|header|footer)(?:_(\d+))?$/', (string) $row->meta_key, $m)) {
+                continue;
+            }
+            $family  = $m[1];
+            $version = isset($m[2]) ? (int) $m[2] : 0;
+            $key     = ((int) $row->post_id) . '|' . $family;
+            if (!isset($best[$key]) || $best[$key]['version'] < $version) {
+                $best[$key] = ['version' => $version, 'row' => $row];
+            }
+        }
+
+        $changesList = [];
+
+        foreach ($best as $entry) {
+            $row = $entry['row'];
+            $raw = $row->meta_value;
+
+            $wasJsonString = self::looksLikeJsonContainer($raw);
+
+            $elements = maybe_unserialize($raw);
+            if (is_string($elements)) {
+                $decoded = json_decode($elements, true);
+                if (is_array($decoded)) {
+                    $elements = $decoded;
+                }
+            }
+            if (!is_array($elements)) {
+                continue;
+            }
+
+            $postTitle = (string) ($row->post_title !== '' ? $row->post_title : '(no title)');
+            $changed   = false;
+
+            foreach ($elements as &$el) {
+                if (!is_array($el)) {
+                    continue;
+                }
+                $classIds = $el['settings']['_cssGlobalClasses'] ?? null;
+                if (!is_array($classIds) || $classIds === []) {
+                    continue;
+                }
+                $currentLabel = isset($el['label']) && is_string($el['label']) ? $el['label'] : '';
+                if ($currentLabel === '') {
+                    continue;
+                }
+                // First class on the element that's being renamed AND whose
+                // derived label matches the current label wins.
+                foreach ($classIds as $cid) {
+                    if (!is_string($cid) || !isset($renameMap[$cid])) {
+                        continue;
+                    }
+                    [$oldClass, $newClass] = $renameMap[$cid];
+                    $oldDerived = Bem::labelFromClass($oldClass);
+                    $newDerived = Bem::labelFromClass($newClass);
+                    if ($oldDerived === $newDerived) {
+                        continue;
+                    }
+                    $rewritten = Bem::rewriteLabel($currentLabel, $oldDerived, $newDerived);
+                    if ($rewritten === $currentLabel) {
+                        continue;
+                    }
+                    $changesList[] = [
+                        'postId'       => (int) $row->post_id,
+                        'postTitle'    => $postTitle,
+                        'elementId'    => (string) ($el['id'] ?? ''),
+                        'elementLabel' => $currentLabel,
+                        'oldLabel'     => $currentLabel,
+                        'newLabel'     => $rewritten,
+                    ];
+                    if ($apply) {
+                        $el['label'] = $rewritten;
+                        $changed     = true;
+                    }
+                    break; // one rename per element
+                }
+            }
+            unset($el);
+
+            if (!$apply || !$changed) {
+                continue;
+            }
+
+            if ($wasJsonString) {
+                $encoded = wp_json_encode($elements, JSON_UNESCAPED_SLASHES);
+                if ($encoded === false) {
+                    continue;
+                }
+                update_post_meta((int) $row->post_id, (string) $row->meta_key, wp_slash($encoded));
+            } else {
+                update_post_meta((int) $row->post_id, (string) $row->meta_key, wp_slash($elements));
+            }
+        }
+
+        return $changesList;
     }
 
     /**
@@ -433,7 +829,24 @@ final class Module implements ModuleInterface, HasAdminPage
 
             <?php $this->renderWpCliNotice($wpcli); ?>
 
-            <div x-data="abbtlCvfApp()" x-init="loadTargets()" style="margin-top:24px;">
+            <div
+                x-data="abbtlCvfApp()"
+                x-init="init()"
+                @keydown.window="onGlobalKeydown($event)"
+                style="margin-top:24px;"
+            >
+
+                <fieldset class="abbtl-cvf__bem">
+                    <legend class="abbtl-cvf__bem-label"><?php esc_html_e('B.E.M Awareness:', 'ab-bricks-tools'); ?></legend>
+                    <label class="abbtl-cvf__bem-toggle">
+                        <input type="checkbox" x-model="bemAware.renameLabels" />
+                        <span><?php esc_html_e('Rename matching element labels', 'ab-bricks-tools'); ?></span>
+                    </label>
+                    <label class="abbtl-cvf__bem-toggle">
+                        <input type="checkbox" x-model="bemAware.propagateBlock" />
+                        <span><?php esc_html_e('Rename related classes for BEM Elements', 'ab-bricks-tools'); ?></span>
+                    </label>
+                </fieldset>
 
                 <div class="abbtl-cvf__picker">
                     <div class="abbtl-cvf__picker-header">
@@ -467,15 +880,41 @@ final class Module implements ModuleInterface, HasAdminPage
 
                     <div class="abbtl-cvf__target-list" x-show="!loading" x-cloak>
                         <template x-for="target in filteredTargets" :key="target.kind + ':' + target.id">
-                            <button
-                                type="button"
+                            <div
+                                role="button"
+                                tabindex="0"
                                 class="abbtl-cvf__target"
                                 :class="{ 'is-selected': isSelected(target) }"
-                                @click="selectTarget(target)"
+                                @click="onPickerRowClick(target)"
+                                @dblclick="onPickerRowDblClick(target)"
+                                @keydown.enter.prevent="selectTarget(target)"
                             >
                                 <span class="abbtl-cvf__badge" :class="'abbtl-cvf__badge--' + target.kind" x-text="target.kind === 'class' ? 'Class' : 'Variable'"></span>
-                                <code x-text="target.kind === 'class' ? ('.' + target.name) : ('--' + target.name)"></code>
-                            </button>
+                                <code
+                                    x-show="!isPickerRenaming(target.id)"
+                                    x-text="target.kind === 'class' ? ('.' + target.name) : ('--' + target.name)"
+                                    :title="target.kind === 'class' ? '<?php echo esc_attr__('Double-click to rename globally', 'ab-bricks-tools'); ?>' : ''"
+                                ></code>
+                                <template x-if="isPickerRenaming(target.id)">
+                                    <input
+                                        type="text"
+                                        class="abbtl-cvf__target-rename"
+                                        x-init="$el.focus(); $el.select();"
+                                        x-model="inlineRename.value"
+                                        :disabled="inlineRename.saving"
+                                        @click.stop
+                                        @blur="commitInlineRename()"
+                                        @keydown.enter.prevent="commitInlineRename()"
+                                        @keydown.escape.prevent="cancelInlineRename()"
+                                    />
+                                </template>
+                                <small
+                                    x-show="isPickerRenaming(target.id) && inlineRename.error"
+                                    x-cloak
+                                    class="abbtl-cvf__rename-error"
+                                    x-text="inlineRename.error"
+                                ></small>
+                            </div>
                         </template>
                         <p
                             x-show="filteredTargets.length === 0"
@@ -489,25 +928,34 @@ final class Module implements ModuleInterface, HasAdminPage
                     <p x-show="loading" x-cloak><em><?php esc_html_e('Loading classes and variables…', 'ab-bricks-tools'); ?></em></p>
                 </div>
 
-                <div class="abbtl-cvf__selection" x-show="selectedTarget" x-cloak>
-                    <span class="abbtl-cvf__selection-label"><?php esc_html_e('Scanning for:', 'ab-bricks-tools'); ?></span>
-                    <code class="abbtl-cvf__selection-token" x-text="selectionToken()"></code>
-                    <button
-                        type="button"
-                        class="button"
-                        @click="scan()"
-                        :disabled="scanning"
-                    >
-                        <span x-show="!scanning"><?php esc_html_e('Re-scan', 'ab-bricks-tools'); ?></span>
-                        <span x-show="scanning" x-cloak><?php esc_html_e('Scanning…', 'ab-bricks-tools'); ?></span>
-                    </button>
-                    <span x-show="scanned && !error" x-cloak class="abbtl-cvf__count">
-                        <span x-text="usages.length + ' <?php echo esc_attr__('usages', 'ab-bricks-tools'); ?>'"></span>
-                        <small style="margin-left:8px;color:#646970;">
-                            <?php esc_html_e('engine:', 'ab-bricks-tools'); ?>
-                            <code x-text="engine || 'unknown'"></code>
-                        </small>
-                    </span>
+                <div class="abbtl-cvf__selection">
+                    <div class="abbtl-cvf__selection-meta" x-show="selectedTarget" x-cloak>
+                        <span class="abbtl-cvf__selection-label"><?php esc_html_e('Scanning for:', 'ab-bricks-tools'); ?></span>
+                        <code class="abbtl-cvf__selection-token" x-text="selectionToken()"></code>
+                        <button
+                            type="button"
+                            class="button"
+                            @click="scan()"
+                            :disabled="scanning"
+                        >
+                            <span x-show="!scanning"><?php esc_html_e('Re-scan', 'ab-bricks-tools'); ?></span>
+                            <span x-show="scanning" x-cloak><?php esc_html_e('Scanning…', 'ab-bricks-tools'); ?></span>
+                        </button>
+                        <span x-show="scanned && !error" x-cloak class="abbtl-cvf__count">
+                            <span x-text="usages.length + ' <?php echo esc_attr__('usages', 'ab-bricks-tools'); ?>'"></span>
+                            <small style="margin-left:8px;color:#646970;">
+                                <?php esc_html_e('engine:', 'ab-bricks-tools'); ?>
+                                <code x-text="engine || 'unknown'"></code>
+                            </small>
+                        </span>
+                    </div>
+                    <div class="abbtl-cvf__selection-actions">
+                        <button
+                            type="button"
+                            class="button"
+                            @click="openRevisionsModal()"
+                        ><?php esc_html_e('Revisions', 'ab-bricks-tools'); ?></button>
+                    </div>
                 </div>
 
                 <details
@@ -581,7 +1029,29 @@ final class Module implements ModuleInterface, HasAdminPage
                                     <td class="abbtl-cvf__classes-cell">
                                         <ul class="abbtl-cvf__class-chips">
                                             <template x-for="cid in (usage.classIds || [])" :key="cid">
-                                                <li class="abbtl-cvf__class-chip" x-text="'.' + (classNameById(cid) || cid)"></li>
+                                                <li
+                                                    class="abbtl-cvf__class-chip"
+                                                    :class="{ 'is-renaming': isChipRenaming(usageKey(usage), cid) }"
+                                                    @dblclick="startChipRename(usage, cid)"
+                                                    title="<?php echo esc_attr__('Double-click to rename globally', 'ab-bricks-tools'); ?>"
+                                                >
+                                                    <span
+                                                        x-show="!isChipRenaming(usageKey(usage), cid)"
+                                                        x-text="'.' + (classNameById(cid) || cid)"
+                                                    ></span>
+                                                    <template x-if="isChipRenaming(usageKey(usage), cid)">
+                                                        <input
+                                                            type="text"
+                                                            class="abbtl-cvf__chip-rename"
+                                                            x-init="$el.focus(); $el.select();"
+                                                            x-model="inlineRename.value"
+                                                            :disabled="inlineRename.saving"
+                                                            @blur="commitInlineRename()"
+                                                            @keydown.enter.prevent="commitInlineRename()"
+                                                            @keydown.escape.prevent="cancelInlineRename()"
+                                                        />
+                                                    </template>
+                                                </li>
                                             </template>
                                             <li x-show="!usage.classIds || usage.classIds.length === 0" class="abbtl-cvf__class-empty">—</li>
                                         </ul>
@@ -751,6 +1221,194 @@ final class Module implements ModuleInterface, HasAdminPage
                         </footer>
                     </div>
                 </div>
+
+                <div
+                    x-show="revisionsModal.open"
+                    x-cloak
+                    class="abbtl-cvf__modal-overlay"
+                    @click.self="closeRevisionsModal()"
+                    @keydown.escape.window="if (revisionsModal.open) closeRevisionsModal()"
+                >
+                    <div class="abbtl-cvf__modal abbtl-cvf__modal--wide" role="dialog" aria-modal="true" aria-labelledby="abbtl-cvf-rev-title">
+                        <header class="abbtl-cvf__modal-header">
+                            <div>
+                                <h2 id="abbtl-cvf-rev-title"><?php esc_html_e('Revisions', 'ab-bricks-tools'); ?></h2>
+                                <p class="abbtl-cvf__modal-subtitle">
+                                    <?php esc_html_e('Snapshots taken before each change to global classes and variables. Last 50 of each kind.', 'ab-bricks-tools'); ?>
+                                </p>
+                            </div>
+                            <button type="button" class="abbtl-cvf__modal-close" @click="closeRevisionsModal()" aria-label="<?php echo esc_attr__('Close', 'ab-bricks-tools'); ?>">&times;</button>
+                        </header>
+
+                        <nav class="abbtl-cvf__rev-tabs" role="tablist">
+                            <button
+                                type="button"
+                                class="abbtl-cvf__rev-tab"
+                                :class="{ 'is-active': revisionsModal.kind === 'classes' }"
+                                @click="switchRevKind('classes')"
+                                role="tab"
+                                :aria-selected="(revisionsModal.kind === 'classes').toString()"
+                            ><?php esc_html_e('Classes', 'ab-bricks-tools'); ?></button>
+                            <button
+                                type="button"
+                                class="abbtl-cvf__rev-tab"
+                                :class="{ 'is-active': revisionsModal.kind === 'variables' }"
+                                @click="switchRevKind('variables')"
+                                role="tab"
+                                :aria-selected="(revisionsModal.kind === 'variables').toString()"
+                            ><?php esc_html_e('Variables', 'ab-bricks-tools'); ?></button>
+                        </nav>
+
+                        <section class="abbtl-cvf__modal-body">
+                            <p x-show="revisionsModal.loading" x-cloak class="abbtl-cvf__rev-loading">
+                                <em><?php esc_html_e('Loading revisions…', 'ab-bricks-tools'); ?></em>
+                            </p>
+
+                            <p x-show="!revisionsModal.loading && revisionsModal.list.length === 0" x-cloak class="abbtl-cvf__rev-empty">
+                                <em><?php esc_html_e('No revisions yet. Snapshots are captured automatically when global classes or variables change.', 'ab-bricks-tools'); ?></em>
+                            </p>
+
+                            <table x-show="!revisionsModal.loading && revisionsModal.list.length > 0" x-cloak class="wp-list-table widefat striped abbtl-cvf__rev-table">
+                                <thead>
+                                    <tr>
+                                        <th scope="col" style="width:200px;"><?php esc_html_e('When', 'ab-bricks-tools'); ?></th>
+                                        <th scope="col"><?php esc_html_e('What changed', 'ab-bricks-tools'); ?></th>
+                                        <th scope="col" style="width:200px;text-align:right;"></th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <template x-for="rev in revisionsModal.list" :key="rev.id">
+                                        <tr>
+                                            <td x-text="rev.when"></td>
+                                            <td x-text="rev.summary"></td>
+                                            <td style="text-align:right;">
+                                                <template x-if="revisionsModal.confirmingId !== rev.id">
+                                                    <button
+                                                        type="button"
+                                                        class="button button-small"
+                                                        @click="confirmRestore(rev.id)"
+                                                    ><?php esc_html_e('Restore', 'ab-bricks-tools'); ?></button>
+                                                </template>
+                                                <template x-if="revisionsModal.confirmingId === rev.id">
+                                                    <span class="abbtl-cvf__rev-confirm">
+                                                        <button
+                                                            type="button"
+                                                            class="button button-small button-link-delete"
+                                                            @click="doRestore(rev.id)"
+                                                            :disabled="revisionsModal.restoring"
+                                                        ><?php esc_html_e('Confirm', 'ab-bricks-tools'); ?></button>
+                                                        <button
+                                                            type="button"
+                                                            class="button button-small"
+                                                            @click="cancelRestoreConfirm()"
+                                                        ><?php esc_html_e('Cancel', 'ab-bricks-tools'); ?></button>
+                                                    </span>
+                                                </template>
+                                            </td>
+                                        </tr>
+                                    </template>
+                                </tbody>
+                            </table>
+
+                            <p x-show="revisionsModal.error" x-cloak class="abbtl-cvf__modal-error" x-text="revisionsModal.error"></p>
+                        </section>
+
+                        <footer class="abbtl-cvf__modal-footer">
+                            <button type="button" class="button button-primary" @click="closeRevisionsModal()"><?php esc_html_e('Done', 'ab-bricks-tools'); ?></button>
+                        </footer>
+                    </div>
+                </div>
+
+                <div
+                    x-show="renamePreview.open"
+                    x-cloak
+                    class="abbtl-cvf__modal-overlay"
+                    @click.self="cancelRenamePreview()"
+                    @keydown.escape.window="if (renamePreview.open) cancelRenamePreview()"
+                >
+                    <div class="abbtl-cvf__modal abbtl-cvf__modal--wide" role="dialog" aria-modal="true" aria-labelledby="abbtl-cvf-rename-preview-title">
+                        <header class="abbtl-cvf__modal-header">
+                            <div>
+                                <h2 id="abbtl-cvf-rename-preview-title"><?php esc_html_e('Confirm BEM-aware rename', 'ab-bricks-tools'); ?></h2>
+                                <p class="abbtl-cvf__modal-subtitle">
+                                    <?php esc_html_e('These cascading changes will be applied. Review before confirming.', 'ab-bricks-tools'); ?>
+                                </p>
+                            </div>
+                            <button type="button" class="abbtl-cvf__modal-close" @click="cancelRenamePreview()" aria-label="<?php echo esc_attr__('Close', 'ab-bricks-tools'); ?>">&times;</button>
+                        </header>
+
+                        <section class="abbtl-cvf__modal-body">
+                            <h3 class="abbtl-cvf__modal-section-heading">
+                                <?php esc_html_e('Classes that will be renamed', 'ab-bricks-tools'); ?>
+                                <span class="abbtl-cvf__preview-count" x-text="'(' + renamePreview.classRenames.length + ')'"></span>
+                            </h3>
+                            <ul class="abbtl-cvf__preview-class-list">
+                                <template x-for="r in renamePreview.classRenames" :key="r.id">
+                                    <li class="abbtl-cvf__preview-row">
+                                        <code class="abbtl-cvf__preview-old" x-text="'.' + r.oldName"></code>
+                                        <span class="abbtl-cvf__preview-arrow" aria-hidden="true">→</span>
+                                        <code class="abbtl-cvf__preview-new" x-text="'.' + r.newName"></code>
+                                    </li>
+                                </template>
+                            </ul>
+
+                            <template x-if="renamePreview.labelChanges.length > 0">
+                                <div>
+                                    <h3 class="abbtl-cvf__modal-section-heading">
+                                        <?php esc_html_e('Element labels that will change', 'ab-bricks-tools'); ?>
+                                        <span class="abbtl-cvf__preview-count" x-text="'(' + renamePreview.labelChanges.length + ')'"></span>
+                                    </h3>
+                                    <div class="abbtl-cvf__preview-labels-wrap">
+                                        <table class="wp-list-table widefat striped abbtl-cvf__preview-labels">
+                                            <thead>
+                                                <tr>
+                                                    <th scope="col"><?php esc_html_e('Page', 'ab-bricks-tools'); ?></th>
+                                                    <th scope="col"><?php esc_html_e('Old label', 'ab-bricks-tools'); ?></th>
+                                                    <th scope="col"><?php esc_html_e('New label', 'ab-bricks-tools'); ?></th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                <template x-for="c in renamePreview.labelChanges" :key="c.postId + '|' + c.elementId">
+                                                    <tr>
+                                                        <td x-text="c.postTitle"></td>
+                                                        <td x-text="c.oldLabel"></td>
+                                                        <td x-text="c.newLabel"></td>
+                                                    </tr>
+                                                </template>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </template>
+
+                            <template x-if="renamePreview.labelChanges.length === 0 && renamePreview.classRenames.length > 1">
+                                <p class="abbtl-cvf__preview-note">
+                                    <em><?php esc_html_e('No element labels match the rename pattern — only classes will change.', 'ab-bricks-tools'); ?></em>
+                                </p>
+                            </template>
+
+                            <p x-show="renamePreview.error" x-cloak class="abbtl-cvf__modal-error" x-text="renamePreview.error"></p>
+                        </section>
+
+                        <footer class="abbtl-cvf__modal-footer">
+                            <button
+                                type="button"
+                                class="button"
+                                @click="cancelRenamePreview()"
+                                :disabled="renamePreview.saving"
+                            ><?php esc_html_e('Cancel', 'ab-bricks-tools'); ?></button>
+                            <button
+                                type="button"
+                                class="button button-primary"
+                                @click="applyRenamePreview()"
+                                :disabled="renamePreview.saving"
+                            >
+                                <span x-show="!renamePreview.saving"><?php esc_html_e('Apply', 'ab-bricks-tools'); ?></span>
+                                <span x-show="renamePreview.saving" x-cloak><?php esc_html_e('Applying…', 'ab-bricks-tools'); ?></span>
+                            </button>
+                        </footer>
+                    </div>
+                </div>
             </div>
 
             <script>
@@ -773,6 +1431,255 @@ final class Module implements ModuleInterface, HasAdminPage
                         perPage: 100,
 
                         editing: null,
+
+                        bemAware: {
+                            renameLabels: true,
+                            propagateBlock: true,
+                        },
+
+                        renamePreview: {
+                            open: false,
+                            classRenames: [],
+                            labelChanges: [],
+                            pendingClassId: null,
+                            pendingName: null,
+                            saving: false,
+                            error: '',
+                            _resolver: null,
+                        },
+
+                        init() {
+                            this.loadBemAwarePrefs();
+                            // Persist BEM toggle changes to localStorage on every flip.
+                            this.$watch('bemAware', () => this.saveBemAwarePrefs(), { deep: true });
+                            return this.loadTargets();
+                        },
+
+                        loadBemAwarePrefs() {
+                            try {
+                                const stored = localStorage.getItem('abbtl_cvf_bem_aware');
+                                if (!stored) return;
+                                const parsed = JSON.parse(stored);
+                                if (parsed && typeof parsed === 'object') {
+                                    if (typeof parsed.renameLabels === 'boolean') this.bemAware.renameLabels = parsed.renameLabels;
+                                    if (typeof parsed.propagateBlock === 'boolean') this.bemAware.propagateBlock = parsed.propagateBlock;
+                                }
+                            } catch (e) {
+                                // localStorage may be disabled / quota exceeded — silent.
+                            }
+                        },
+
+                        saveBemAwarePrefs() {
+                            try {
+                                localStorage.setItem('abbtl_cvf_bem_aware', JSON.stringify({
+                                    renameLabels: !!this.bemAware.renameLabels,
+                                    propagateBlock: !!this.bemAware.propagateBlock,
+                                }));
+                            } catch (e) {
+                                // ignore
+                            }
+                        },
+
+                        revisionsModal: {
+                            open: false,
+                            kind: 'classes',
+                            list: [],
+                            loading: false,
+                            confirmingId: null,
+                            restoring: false,
+                            error: '',
+                        },
+
+                        async openRevisionsModal() {
+                            this.revisionsModal.open = true;
+                            this.revisionsModal.kind = 'classes';
+                            this.revisionsModal.confirmingId = null;
+                            this.revisionsModal.error = '';
+                            await this.loadRevisions();
+                        },
+
+                        closeRevisionsModal() {
+                            this.revisionsModal.open = false;
+                            this.revisionsModal.confirmingId = null;
+                        },
+
+                        async switchRevKind(kind) {
+                            if (kind !== 'classes' && kind !== 'variables') return;
+                            if (this.revisionsModal.kind === kind) return;
+                            this.revisionsModal.kind = kind;
+                            this.revisionsModal.confirmingId = null;
+                            await this.loadRevisions();
+                        },
+
+                        async loadRevisions() {
+                            this.revisionsModal.loading = true;
+                            this.revisionsModal.error = '';
+                            try {
+                                const url = ABBTL.restUrl + '<?php echo esc_js(self::REST_ROUTE_REVISIONS_LIST); ?>?kind=' + encodeURIComponent(this.revisionsModal.kind);
+                                const r = await fetch(url, {
+                                    method: 'GET',
+                                    headers: { 'X-WP-Nonce': ABBTL.nonce },
+                                });
+                                const data = await r.json();
+                                if (!r.ok) throw new Error(data.message || data.error || 'Load failed');
+                                this.revisionsModal.list = Array.isArray(data.revisions) ? data.revisions : [];
+                            } catch (e) {
+                                console.error('[ABBTL CVF] loadRevisions failed:', e);
+                                this.revisionsModal.error = e.message || 'Failed to load revisions';
+                                this.revisionsModal.list = [];
+                            } finally {
+                                this.revisionsModal.loading = false;
+                            }
+                        },
+
+                        confirmRestore(revisionId) {
+                            this.revisionsModal.confirmingId = revisionId;
+                        },
+
+                        cancelRestoreConfirm() {
+                            this.revisionsModal.confirmingId = null;
+                        },
+
+                        /**
+                         * Keyboard navigation through the revisions timeline:
+                         *   Ctrl/Cmd + Z                = undo (step back)
+                         *   Ctrl/Cmd + Shift + Z        = redo (step forward)
+                         *   Ctrl + Y                    = redo (Windows alt)
+                         *
+                         * Cursor `_lastUndoneTs`:
+                         *   - null  → "we're at the head of the timeline"
+                         *             (next undo grabs absolute newest)
+                         *   - <ts>  → "the snapshot at ts is what's live now"
+                         *             (undo seeks before ts; redo seeks after)
+                         *
+                         * Cursor is reset to null whenever the user makes a
+                         * NEW change via our endpoints (the timeline grew at
+                         * the head — no more redo history beyond it).
+                         */
+                        _lastUndoneTs: null,
+                        _navigating: false,
+
+                        onGlobalKeydown(event) {
+                            if (event.altKey) return;
+                            if (!(event.ctrlKey || event.metaKey)) return;
+
+                            const key = (event.key || '').toLowerCase();
+                            let isUndo = false;
+                            let isRedo = false;
+                            if (key === 'z') {
+                                if (event.shiftKey) isRedo = true;
+                                else isUndo = true;
+                            } else if (key === 'y' && !event.shiftKey) {
+                                isRedo = true;
+                            }
+                            if (!isUndo && !isRedo) return;
+
+                            // Don't hijack from inputs / textareas / contenteditable.
+                            const t = event.target;
+                            if (t) {
+                                const tag = (t.tagName || '').toLowerCase();
+                                if (tag === 'input' || tag === 'textarea' || t.isContentEditable) return;
+                            }
+
+                            // Only act on the CVF tab.
+                            const activeTab = new URLSearchParams(location.search).get('tab') || 'modules';
+                            if (activeTab !== '<?php echo esc_js($this->getSlug()); ?>') return;
+
+                            // Don't fire when any modal is open or we're mid-flight.
+                            if (this.classesModal.open || this.revisionsModal.open || this.renamePreview.open) return;
+                            if (this._navigating) return;
+
+                            event.preventDefault();
+                            if (isRedo) {
+                                this.redoStepForward();
+                            } else {
+                                this.undoStepBack();
+                            }
+                        },
+
+                        async undoStepBack() {
+                            const params = this._lastUndoneTs !== null
+                                ? '?before=' + encodeURIComponent(this._lastUndoneTs)
+                                : '';
+                            await this._navigateRevision(params);
+                        },
+
+                        async redoStepForward() {
+                            if (this._lastUndoneTs === null) return;
+                            const params = '?after=' + encodeURIComponent(this._lastUndoneTs);
+                            await this._navigateRevision(params);
+                        },
+
+                        async _navigateRevision(queryString) {
+                            this._navigating = true;
+                            try {
+                                const r = await fetch(
+                                    ABBTL.restUrl + '<?php echo esc_js(self::REST_ROUTE_REVISIONS_LATEST); ?>' + queryString,
+                                    { method: 'GET', headers: { 'X-WP-Nonce': ABBTL.nonce } }
+                                );
+                                const data = await r.json();
+                                if (!r.ok || !data.success || !data.kind || !data.id) return;
+
+                                const restoreR = await fetch(
+                                    ABBTL.restUrl + '<?php echo esc_js(self::REST_ROUTE_REVISIONS_RESTORE); ?>',
+                                    {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json', 'X-WP-Nonce': ABBTL.nonce },
+                                        body: JSON.stringify({ kind: data.kind, revisionId: data.id }),
+                                    }
+                                );
+                                const restoreData = await restoreR.json();
+                                if (!restoreR.ok || !restoreData.success) {
+                                    console.error('[ABBTL CVF] navigate failed:', restoreData);
+                                    return;
+                                }
+                                this._lastUndoneTs = restoreData.ts;
+
+                                await this.loadTargets();
+                                if (this.selectedTarget && this.scanned) {
+                                    await this.scan();
+                                }
+                                if (this.revisionsModal.open) {
+                                    await this.loadRevisions();
+                                }
+                            } finally {
+                                this._navigating = false;
+                            }
+                        },
+
+                        async doRestore(revisionId) {
+                            this.revisionsModal.restoring = true;
+                            this.revisionsModal.error = '';
+                            try {
+                                const r = await fetch(
+                                    ABBTL.restUrl + '<?php echo esc_js(self::REST_ROUTE_REVISIONS_RESTORE); ?>',
+                                    {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json', 'X-WP-Nonce': ABBTL.nonce },
+                                        body: JSON.stringify({ kind: this.revisionsModal.kind, revisionId: revisionId }),
+                                    }
+                                );
+                                const data = await r.json();
+                                if (!r.ok || !data.success) throw new Error(data.error || 'Restore failed');
+                                this.revisionsModal.confirmingId = null;
+                                // Update the undo cursor so a subsequent Ctrl+Z steps
+                                // back from THIS restore point (not from the head).
+                                this._lastUndoneTs = (typeof data.ts === 'number') ? data.ts : null;
+                                // Reload the list AND the target catalog since names
+                                // may have changed across the table.
+                                await this.loadRevisions();
+                                await this.loadTargets();
+                                // Re-scan to pick up renamed names in usage rows, if a target is active.
+                                if (this.selectedTarget && this.scanned) {
+                                    await this.scan();
+                                }
+                            } catch (e) {
+                                console.error('[ABBTL CVF] doRestore failed:', e);
+                                this.revisionsModal.error = e.message || 'Restore failed';
+                            } finally {
+                                this.revisionsModal.restoring = false;
+                            }
+                        },
 
                         classesModal: {
                             open: false,
@@ -961,28 +1868,240 @@ final class Module implements ModuleInterface, HasAdminPage
                                 this.cancelClassRename();
                                 return;
                             }
+                            const result = await this._renameClassById(id, newName);
+                            if (!result.success) {
+                                if (!result.cancelled) {
+                                    this.classesModal.error = result.error || 'Rename failed';
+                                }
+                                this.cancelClassRename();
+                                return;
+                            }
+                            // Sync the modal's local copy of the class row.
+                            current.name = result.name;
+                            this.classesModal.error = '';
+                            this.cancelClassRename();
+                        },
+
+                        /**
+                         * Shared rename — POSTs to the rename-class endpoint and updates the
+                         * targets catalogue. Returns {success, name?, error?}. Used by the
+                         * Edit Classes modal, the picker, and the per-row chips so all three
+                         * surfaces stay in sync after a rename.
+                         */
+                        /**
+                         * Public rename entry point. Behaves like a single rename for
+                         * callers, but transparently runs a server dry-run first; if the
+                         * rename would propagate to other classes or rewrite labels, the
+                         * confirmation modal opens and the returned promise resolves with
+                         * the eventual apply (or {cancelled:true}).
+                         */
+                        async _renameClassById(classId, newName) {
+                            const preview = await this._fetchRename(classId, newName, true);
+                            if (!preview.success) return preview;
+
+                            const needsConfirm =
+                                (Array.isArray(preview.renamed) && preview.renamed.length > 1)
+                                || (Array.isArray(preview.labelChanges) && preview.labelChanges.length > 0);
+
+                            if (!needsConfirm) {
+                                return await this._fetchRename(classId, newName, false);
+                            }
+
+                            // Open the preview modal and wait for user decision.
+                            return new Promise((resolve) => {
+                                this.renamePreview.open = true;
+                                this.renamePreview.classRenames = preview.renamed || [];
+                                this.renamePreview.labelChanges = preview.labelChanges || [];
+                                this.renamePreview.pendingClassId = classId;
+                                this.renamePreview.pendingName = newName;
+                                this.renamePreview.error = '';
+                                this.renamePreview.saving = false;
+                                this.renamePreview._resolver = resolve;
+                            });
+                        },
+
+                        async _fetchRename(classId, newName, dryRun) {
                             try {
                                 const r = await fetch(
                                     ABBTL.restUrl + '<?php echo esc_js(self::REST_ROUTE_RENAME_CLASS); ?>',
                                     {
                                         method: 'POST',
                                         headers: { 'Content-Type': 'application/json', 'X-WP-Nonce': ABBTL.nonce },
-                                        body: JSON.stringify({ classId: id, name: newName }),
+                                        body: JSON.stringify({
+                                            classId,
+                                            name: newName,
+                                            bemPropagateBlock: !!this.bemAware.propagateBlock,
+                                            bemRenameLabels: !!this.bemAware.renameLabels,
+                                            dryRun: !!dryRun,
+                                        }),
                                     }
                                 );
                                 const data = await r.json();
                                 if (!r.ok || !data.success) throw new Error(data.error || 'Rename failed');
-                                const saved = data.name;
-                                current.name = saved;
-                                // Update the catalogue entry so every row's chips re-render.
-                                const catalogEntry = this.targets.find(t => t.kind === 'class' && t.id === id);
-                                if (catalogEntry) catalogEntry.name = saved;
-                                this.classesModal.error = '';
+
+                                // Commit path: update the catalog for every renamed class so
+                                // every row's chips re-render with the new names.
+                                if (!dryRun && Array.isArray(data.renamed)) {
+                                    for (const item of data.renamed) {
+                                        const entry = this.targets.find(t => t.kind === 'class' && t.id === item.id);
+                                        if (entry) entry.name = item.newName;
+                                    }
+                                    // New change → invalidate any undo cursor so the next
+                                    // Ctrl+Z grabs the absolute newest snapshot.
+                                    this._lastUndoneTs = null;
+                                }
+                                return {
+                                    success: true,
+                                    name: data.name,
+                                    renamed: data.renamed || [],
+                                    labelChanges: data.labelChanges || [],
+                                    labelsUpdated: data.labelsUpdated || 0,
+                                };
                             } catch (e) {
                                 console.error('[ABBTL CVF] rename failed:', e);
-                                this.classesModal.error = e.message || 'Rename failed';
+                                return { success: false, error: e.message || 'Rename failed' };
                             }
-                            this.cancelClassRename();
+                        },
+
+                        async applyRenamePreview() {
+                            if (!this.renamePreview.pendingClassId) return;
+                            this.renamePreview.saving = true;
+                            this.renamePreview.error = '';
+                            const result = await this._fetchRename(
+                                this.renamePreview.pendingClassId,
+                                this.renamePreview.pendingName,
+                                false
+                            );
+                            this.renamePreview.saving = false;
+                            if (!result.success) {
+                                this.renamePreview.error = result.error || 'Rename failed';
+                                return;
+                            }
+                            this._resolveRenamePreview(result);
+                            this.closeRenamePreview();
+                        },
+
+                        cancelRenamePreview() {
+                            if (this.renamePreview.saving) return;
+                            this._resolveRenamePreview({ success: false, cancelled: true });
+                            this.closeRenamePreview();
+                        },
+
+                        closeRenamePreview() {
+                            this.renamePreview.open = false;
+                            this.renamePreview.classRenames = [];
+                            this.renamePreview.labelChanges = [];
+                            this.renamePreview.pendingClassId = null;
+                            this.renamePreview.pendingName = null;
+                            this.renamePreview.error = '';
+                            this.renamePreview.saving = false;
+                        },
+
+                        _resolveRenamePreview(result) {
+                            if (this.renamePreview._resolver) {
+                                this.renamePreview._resolver(result);
+                                this.renamePreview._resolver = null;
+                            }
+                        },
+
+                        /** Inline rename state — shared by the picker row and the per-usage chip. */
+                        inlineRename: {
+                            where: null,    // 'picker' | 'chip' | null
+                            rowKey: null,   // chip: usageKey, picker: null
+                            classId: null,
+                            value: '',
+                            saving: false,
+                            error: '',
+                        },
+
+                        isPickerRenaming(classId) {
+                            return this.inlineRename.where === 'picker'
+                                && this.inlineRename.classId === classId;
+                        },
+
+                        isChipRenaming(usageKey, classId) {
+                            return this.inlineRename.where === 'chip'
+                                && this.inlineRename.rowKey === usageKey
+                                && this.inlineRename.classId === classId;
+                        },
+
+                        startPickerRename(target) {
+                            if (!target || target.kind !== 'class') return;
+                            this.inlineRename.where = 'picker';
+                            this.inlineRename.rowKey = null;
+                            this.inlineRename.classId = target.id;
+                            this.inlineRename.value = target.name;
+                            this.inlineRename.saving = false;
+                            this.inlineRename.error = '';
+                        },
+
+                        startChipRename(usage, classId) {
+                            const cls = this.classById(classId);
+                            if (!cls) return;
+                            this.inlineRename.where = 'chip';
+                            this.inlineRename.rowKey = this.usageKey(usage);
+                            this.inlineRename.classId = classId;
+                            this.inlineRename.value = cls.name;
+                            this.inlineRename.saving = false;
+                            this.inlineRename.error = '';
+                        },
+
+                        cancelInlineRename() {
+                            this.inlineRename.where = null;
+                            this.inlineRename.rowKey = null;
+                            this.inlineRename.classId = null;
+                            this.inlineRename.value = '';
+                            this.inlineRename.saving = false;
+                            this.inlineRename.error = '';
+                        },
+
+                        async commitInlineRename() {
+                            const id = this.inlineRename.classId;
+                            if (!id) return;
+                            const newName = (this.inlineRename.value || '').trim();
+                            const current = this.classById(id);
+                            if (!current || newName === '' || newName === current.name) {
+                                this.cancelInlineRename();
+                                return;
+                            }
+                            this.inlineRename.saving = true;
+                            const result = await this._renameClassById(id, newName);
+                            this.inlineRename.saving = false;
+                            if (!result.success) {
+                                if (!result.cancelled) {
+                                    this.inlineRename.error = result.error || 'Rename failed';
+                                    // Leave the input open so the user can fix and retry.
+                                    return;
+                                }
+                            }
+                            this.cancelInlineRename();
+                        },
+
+                        /**
+                         * Click-defer for the picker row — a single click selects the
+                         * target (and triggers a scan), but dblclick should fire rename
+                         * without first dispatching the select. We defer the select by
+                         * ~220ms; if dblclick lands inside that window, we cancel.
+                         */
+                        _pickerClickTimer: null,
+
+                        onPickerRowClick(target) {
+                            // If a rename is active on this row, swallow the click — the
+                            // input handles its own events.
+                            if (this.isPickerRenaming(target.id)) return;
+                            if (this._pickerClickTimer) clearTimeout(this._pickerClickTimer);
+                            this._pickerClickTimer = setTimeout(() => {
+                                this._pickerClickTimer = null;
+                                this.selectTarget(target);
+                            }, 220);
+                        },
+
+                        onPickerRowDblClick(target) {
+                            if (this._pickerClickTimer) {
+                                clearTimeout(this._pickerClickTimer);
+                                this._pickerClickTimer = null;
+                            }
+                            this.startPickerRename(target);
                         },
 
                         usageKey(usage) {

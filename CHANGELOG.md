@@ -3,6 +3,72 @@
 All notable changes to this project will be documented in this file.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.0.4] - 2026-05-31
+
+### Added
+
+- **Revisions for global classes and variables.** Every change to
+  `bricks_global_classes` / `bricks_global_variables` (from our plugin
+  OR from Bricks Style Manager OR anywhere) is snapshotted via the
+  `update_option_*` hook, capped at 50 per kind. A Revisions button in
+  the Class & Variable Finder toolbar opens a modal with Classes /
+  Variables tabs, listing when each change happened (in the site's WP
+  date+time format) and a one-line diff summary (renames, adds,
+  removes). Each row has an inline confirm-to-restore button.
+- **Non-destructive timeline.** Restoring a revision applies its
+  snapshot to the source option but does NOT delete any revisions, so
+  users can freely move forward and backward in time. Only the 50-cap
+  prunes the tail.
+- **Keyboard navigation.**
+    - `Ctrl/Cmd + Z` → step backward one snapshot (undo)
+    - `Ctrl/Cmd + Shift + Z` → step forward one snapshot (redo)
+    - `Ctrl + Y` → step forward (Windows convention)
+  Skipped when focus is in an `<input>` / `<textarea>` / contenteditable,
+  when any modal is open, or when the CVF tab isn't the active one.
+  Client tracks a cursor (`_lastUndoneTs`) so repeated presses walk the
+  timeline; the cursor resets on any new rename.
+- **BEM-aware class rename.** Two "B.E.M Awareness" toggles above the
+  picker (state persisted to localStorage, default ON):
+    - "Rename matching element labels" — walks site-wide postmeta and
+      rewrites element labels that normalize-match the old
+      class-derived label, preserving bracketed comments like `(left)`
+      / `[hero]` in their original positions.
+    - "Rename related classes for BEM Elements" — when the Block
+      segment of a class changes (e.g. `brand-card-04__title` →
+      `brand-card__title`), every other class in the same block family
+      gets its prefix rewritten in one transaction. New `Bem` helper:
+      segment parser (B / E / M), label derivation (sentence case from
+      B or E), label normalizer (strips `(…)` / `[…]` / `{…}`), label
+      rewriter (preserves comments).
+- **Confirmation modal for BEM renames.** The rename endpoint accepts
+  `dryRun: true` and returns a plan (`{renamed: […], labelChanges:
+  […]}`) without writing. The client runs a dry-run first; if the
+  plan touches more than one class or any element label, a confirmation
+  modal lists every class rename (old → new) and every label change
+  (post title / old / new) before the user clicks Apply.
+- **Inline class renames in the picker rows and the result chips.**
+  Double-click any class entry (in the filterable picker or in a Class
+  chip on a usage row) to enter a rename input. Picker rows defer
+  single-click → select-target by ~220 ms so a fast second click
+  triggers rename instead of select. All three rename surfaces (modal,
+  picker, chip) flow through one `_renameClassById()` helper so they
+  share validation, propagation, label updates, and catalog refresh.
+- **Form Manager: Confirmation Email columns.** Bricks's email action
+  supports two emails: the primary "Email" and the "Confirmation
+  Email". Five new inline-editable cells per row
+  (`confirmationFromName`, `confirmationFromEmail`,
+  `confirmationReplyToEmail`, `confirmationEmailTo`,
+  `confirmationEmailSubject`) added to the save whitelist.
+- **Form Manager: grouped headers + sticky Form column + horizontal
+  scroll.** Two-level `<thead>` with colspan group cells (Action
+  Email / Confirmation Email / Response). The Form column uses
+  `position: sticky; left: 0` with row-matched background and a soft
+  right-edge shadow. Cells are `white-space: nowrap` with ellipsis on
+  display values; the edit input shows the full value. A "Show
+  Confirmation Email columns" toggle in the toolbar (default OFF,
+  persisted to localStorage) hides the confirmation group when
+  unused.
+
 ## [0.0.3] - 2026-05-31
 
 ### Added

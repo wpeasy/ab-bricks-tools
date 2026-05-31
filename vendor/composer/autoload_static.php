@@ -27,7 +27,9 @@ class ComposerStaticInit14e9fa1e50085f2ed31203bdc8114d0a
     public static $classMap = array (
         'AB\\BricksTools\\Admin\\AdminPage' => __DIR__ . '/../..' . '/src/Admin/AdminPage.php',
         'AB\\BricksTools\\Admin\\Layout' => __DIR__ . '/../..' . '/src/Admin/Layout.php',
+        'AB\\BricksTools\\Modules\\BricksClassVariableFinder\\Bem' => __DIR__ . '/../..' . '/src/Modules/BricksClassVariableFinder/Bem.php',
         'AB\\BricksTools\\Modules\\BricksClassVariableFinder\\Module' => __DIR__ . '/../..' . '/src/Modules/BricksClassVariableFinder/Module.php',
+        'AB\\BricksTools\\Modules\\BricksClassVariableFinder\\RevisionStore' => __DIR__ . '/../..' . '/src/Modules/BricksClassVariableFinder/RevisionStore.php',
         'AB\\BricksTools\\Modules\\BricksClassVariableFinder\\TargetCatalog' => __DIR__ . '/../..' . '/src/Modules/BricksClassVariableFinder/TargetCatalog.php',
         'AB\\BricksTools\\Modules\\BricksClassVariableFinder\\Usage' => __DIR__ . '/../..' . '/src/Modules/BricksClassVariableFinder/Usage.php',
         'AB\\BricksTools\\Modules\\BricksClassVariableFinder\\UsageFinder' => __DIR__ . '/../..' . '/src/Modules/BricksClassVariableFinder/UsageFinder.php',

@@ -352,14 +352,73 @@
     color: #646970;
 }
 
-/* Table wrap — 10 cols can overflow narrower screens */
+.abbtl-bfm__toolbar-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    color: #50575e;
+    cursor: pointer;
+}
+
+.abbtl-bfm__toolbar-toggle input[type="checkbox"] {
+    margin: 0;
+}
+
+/* Table wrap — many columns; horizontal scroll handles width. */
 .abbtl-bfm__table-wrap {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
+    border-radius: 4px;
 }
 
 .abbtl-bfm__table {
-    min-width: 1100px;
+    border-collapse: separate;
+    border-spacing: 0;
+}
+
+/* No wrap anywhere — long values truncate via ellipsis inside cell-value */
+.abbtl-bfm__table th,
+.abbtl-bfm__table td {
+    white-space: nowrap;
+}
+
+/* Group header row (Action Email / Confirmation Email / Response) */
+.abbtl-bfm__group {
+    text-align: center;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    border-bottom: 1px solid #dcdcde;
+    background: #f6f7f7;
+    color: #50575e;
+}
+
+.abbtl-bfm__group--action       { color: #075985; }
+.abbtl-bfm__group--confirmation { color: #6b21a8; }
+.abbtl-bfm__group--response     { color: #166534; }
+
+/* Sticky Form column — masks scrolled-under cells with the row's bg color */
+.abbtl-bfm__sticky-col {
+    position: sticky;
+    left: 0;
+    z-index: 2;
+    background: #fff;
+    box-shadow: 4px 0 4px -4px rgba(0, 0, 0, 0.12);
+}
+
+.abbtl-bfm__table.striped > tbody > tr:nth-of-type(odd) td.abbtl-bfm__sticky-col {
+    background-color: #f6f7f7;
+}
+
+.abbtl-bfm__table thead th.abbtl-bfm__sticky-col {
+    background: #fff;
+    z-index: 3;
+}
+
+/* Confirmation Email column visibility toggle */
+.abbtl-bfm__conf-col.is-hidden {
+    display: none;
 }
 
 /* Editable cells */
@@ -370,14 +429,17 @@
 .abbtl-bfm__cell-value {
     display: inline-block;
     min-width: 1.5em;
-    min-height: 1em;
     padding: 2px 4px;
     margin: -2px -4px;
     border-radius: 3px;
     cursor: pointer;
     transition: background-color 0.1s ease;
-    word-break: break-word;
-    max-width: 280px;
+    /* Truncate inside the cell; full value visible in the edit input on dblclick. */
+    max-width: 220px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    vertical-align: middle;
 }
 
 .abbtl-bfm__cell-value:hover {
@@ -442,6 +504,41 @@ textarea.abbtl-bfm__edit-input {
 /* ====================================================================
    Class & Variable Finder
    ==================================================================== */
+
+.abbtl-cvf__bem {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px 18px;
+    margin: 12px 0;
+    padding: 10px 14px;
+    background: #fff;
+    border: 1px solid #dcdcde;
+    border-radius: 6px;
+}
+
+.abbtl-cvf__bem-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: #1d2327;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 0;
+    margin: 0;
+}
+
+.abbtl-cvf__bem-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    color: #1d2327;
+    cursor: pointer;
+}
+
+.abbtl-cvf__bem-toggle input[type="checkbox"] {
+    margin: 0;
+}
 
 .abbtl-cvf__picker {
     margin: 16px 0;
@@ -561,6 +658,21 @@ textarea.abbtl-bfm__edit-input {
     color: #1d2327;
 }
 
+.abbtl-cvf__target-rename {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: 2px 6px;
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 12px;
+    line-height: 1.4;
+}
+
+.abbtl-cvf__rename-error {
+    margin-left: 8px;
+    color: #d63638;
+    font-size: 11px;
+}
+
 .abbtl-cvf__badge {
     display: inline-block;
     flex: 0 0 auto;
@@ -598,6 +710,23 @@ textarea.abbtl-bfm__edit-input {
     border: 1px solid #dcdcde;
     border-radius: 6px;
     margin-bottom: 12px;
+    /* Even when no target is selected, the strip should still be visible
+       (it carries the Revisions button on the right). Setting min-height
+       prevents the strip from collapsing to 0 when its left meta is hidden. */
+    min-height: 38px;
+}
+
+.abbtl-cvf__selection-meta {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    flex: 1 1 auto;
+}
+
+.abbtl-cvf__selection-actions {
+    margin-left: auto;
+    flex: 0 0 auto;
 }
 
 .abbtl-cvf__selection-label {
@@ -739,7 +868,8 @@ textarea.abbtl-bfm__edit-input {
 }
 
 .abbtl-cvf__class-chip {
-    display: inline-block;
+    display: inline-flex;
+    align-items: center;
     padding: 1px 8px;
     font-size: 11px;
     font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
@@ -747,6 +877,36 @@ textarea.abbtl-bfm__edit-input {
     background: #e0f2fe;
     border-radius: 999px;
     line-height: 1.7;
+    cursor: pointer;
+    transition: background-color 0.1s ease;
+}
+
+.abbtl-cvf__class-chip:hover {
+    background: #bae6fd;
+}
+
+.abbtl-cvf__class-chip.is-renaming {
+    background: #fff;
+    padding: 0 4px;
+    box-shadow: inset 0 0 0 1px #2271b1;
+}
+
+.abbtl-cvf__chip-rename {
+    appearance: none;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+    outline: none;
+    padding: 0 2px;
+    margin: 0;
+    height: auto;
+    line-height: 1.7;
+    font-family: inherit;
+    font-size: 11px;
+    color: #075985;
+    min-width: 80px;
+    max-width: 180px;
+    width: auto;
 }
 
 .abbtl-cvf__class-empty {
@@ -1014,4 +1174,140 @@ textarea.abbtl-bfm__edit-input {
     background: #f6f7f7;
     display: flex;
     justify-content: flex-end;
+    gap: 8px;
+}
+
+/* Rename preview modal — class-rename list + labels-change table */
+.abbtl-cvf__preview-count {
+    margin-left: 6px;
+    color: #646970;
+    font-weight: 400;
+    text-transform: none;
+    letter-spacing: 0;
+}
+
+.abbtl-cvf__preview-class-list {
+    list-style: none;
+    margin: 0 0 12px;
+    padding: 0;
+    border: 1px solid #dcdcde;
+    border-radius: 4px;
+    background: #fff;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.abbtl-cvf__preview-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 12px;
+    border-bottom: 1px solid #f0f0f1;
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 12px;
+}
+
+.abbtl-cvf__preview-row:last-child {
+    border-bottom: 0;
+}
+
+.abbtl-cvf__preview-old {
+    color: #b32d2e;
+    background: transparent;
+    padding: 0;
+}
+
+.abbtl-cvf__preview-new {
+    color: #096b1a;
+    background: transparent;
+    padding: 0;
+}
+
+.abbtl-cvf__preview-arrow {
+    color: #50575e;
+}
+
+.abbtl-cvf__preview-labels-wrap {
+    max-height: 280px;
+    overflow-y: auto;
+    border: 1px solid #dcdcde;
+    border-radius: 4px;
+    background: #fff;
+}
+
+.abbtl-cvf__preview-labels {
+    margin: 0;
+    border: 0;
+}
+
+.abbtl-cvf__preview-labels th,
+.abbtl-cvf__preview-labels td {
+    vertical-align: middle;
+    font-size: 13px;
+}
+
+.abbtl-cvf__preview-note {
+    margin: 8px 0 0;
+    color: #646970;
+    font-size: 12px;
+}
+
+/* Revisions modal — wider, with internal tabs */
+.abbtl-cvf__modal--wide {
+    max-width: 760px;
+}
+
+.abbtl-cvf__rev-tabs {
+    display: flex;
+    gap: 4px;
+    padding: 0 22px;
+    border-bottom: 1px solid #dcdcde;
+    background: #fafafa;
+}
+
+.abbtl-cvf__rev-tab {
+    appearance: none;
+    background: transparent;
+    border: 0;
+    padding: 10px 16px;
+    font-size: 13px;
+    font-weight: 600;
+    color: #50575e;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    line-height: 1.4;
+}
+
+.abbtl-cvf__rev-tab:hover:not(.is-active) {
+    color: #1d2327;
+}
+
+.abbtl-cvf__rev-tab.is-active {
+    color: #2271b1;
+    border-bottom-color: #2271b1;
+}
+
+.abbtl-cvf__rev-table {
+    margin: 0;
+}
+
+.abbtl-cvf__rev-table th,
+.abbtl-cvf__rev-table td {
+    vertical-align: middle;
+}
+
+.abbtl-cvf__rev-loading,
+.abbtl-cvf__rev-empty {
+    margin: 16px 0;
+    color: #646970;
+}
+
+.abbtl-cvf__rev-confirm {
+    display: inline-flex;
+    gap: 6px;
+    align-items: center;
+}
+
+.abbtl-cvf__rev-confirm .button-link-delete {
+    color: #b32d2e;
 }
