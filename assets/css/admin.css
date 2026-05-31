@@ -540,6 +540,103 @@ textarea.abbtl-bfm__edit-input {
     margin: 0;
 }
 
+.abbtl-cvf__bem-help-btn {
+    margin-left: auto;
+    background: transparent;
+    border: 0;
+    color: #2271b1;
+    cursor: pointer;
+    font-size: 12px;
+    padding: 4px 8px;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    border-radius: 3px;
+}
+
+.abbtl-cvf__bem-help-btn:hover,
+.abbtl-cvf__bem-help-btn:focus {
+    color: #135e96;
+    background: #f0f6fb;
+    outline: none;
+}
+
+/* BEM help modal — denser prose + inline reference tables */
+.abbtl-cvf__bem-help h3 {
+    margin: 18px 0 6px;
+    font-size: 14px;
+    color: #1d2327;
+}
+
+.abbtl-cvf__bem-help h3:first-child {
+    margin-top: 0;
+}
+
+.abbtl-cvf__bem-help h4 {
+    margin: 12px 0 6px;
+    font-size: 13px;
+    color: #1d2327;
+}
+
+.abbtl-cvf__bem-help p {
+    margin: 6px 0;
+    line-height: 1.55;
+    color: #1d2327;
+}
+
+.abbtl-cvf__bem-help ul,
+.abbtl-cvf__bem-help ol {
+    margin: 6px 0 6px 20px;
+    padding: 0;
+    line-height: 1.55;
+}
+
+.abbtl-cvf__bem-help li {
+    margin: 4px 0;
+}
+
+.abbtl-cvf__bem-help code {
+    background: #f6f7f7;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 12px;
+    color: #1d2327;
+}
+
+.abbtl-cvf__help-table {
+    width: 100%;
+    margin: 6px 0 12px;
+    border-collapse: collapse;
+    font-size: 13px;
+}
+
+.abbtl-cvf__help-table th,
+.abbtl-cvf__help-table td {
+    text-align: left;
+    padding: 6px 10px;
+    border-bottom: 1px solid #f0f0f1;
+    vertical-align: top;
+}
+
+.abbtl-cvf__help-table thead th {
+    border-bottom: 1px solid #dcdcde;
+    background: #f6f7f7;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #50575e;
+}
+
+.abbtl-cvf__help-table tbody tr:last-child td {
+    border-bottom: 0;
+}
+
+.abbtl-cvf__help-caption {
+    margin: -4px 0 12px;
+    font-size: 12px;
+    color: #646970;
+    font-style: italic;
+}
+
 .abbtl-cvf__picker {
     margin: 16px 0;
     padding: 12px 14px;

@@ -3,6 +3,23 @@
 All notable changes to this project will be documented in this file.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.0.5] - 2026-05-31
+
+### Added
+
+- **B.E.M Awareness help modal.** New "How it works" link in the
+  B.E.M Awareness bar opens an in-app reference explaining: BEM
+  segmenting (B / E / M), the Block-change rule that triggers class
+  propagation, how element labels are derived from classes
+  (Block-only / Block+Element / Block+Modifier shapes), how labels are
+  normalized for matching, how bracketed comments (<code>(…)</code>,
+  <code>[…]</code>, <code>{…}</code>) are preserved through rewrites,
+  and the full "what is skipped" list (customized labels, post
+  revisions, trash, auto-drafts, variables, multi-class first-match
+  rule, both-toggles-off case). Includes before/after example tables
+  for label rewrites and a reference table for class-shape →
+  label-segment mapping.
+
 ## [0.0.4] - 2026-05-31
 
 ### Added

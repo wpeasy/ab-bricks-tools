@@ -846,6 +846,11 @@ final class Module implements ModuleInterface, HasAdminPage
                         <input type="checkbox" x-model="bemAware.propagateBlock" />
                         <span><?php esc_html_e('Rename related classes for BEM Elements', 'ab-bricks-tools'); ?></span>
                     </label>
+                    <button
+                        type="button"
+                        class="button-link abbtl-cvf__bem-help-btn"
+                        @click="openBemHelp()"
+                    ><?php esc_html_e('How it works', 'ab-bricks-tools'); ?></button>
                 </fieldset>
 
                 <div class="abbtl-cvf__picker">
@@ -1409,6 +1414,185 @@ final class Module implements ModuleInterface, HasAdminPage
                         </footer>
                     </div>
                 </div>
+
+                <div
+                    x-show="bemHelp.open"
+                    x-cloak
+                    class="abbtl-cvf__modal-overlay"
+                    @click.self="closeBemHelp()"
+                    @keydown.escape.window="if (bemHelp.open) closeBemHelp()"
+                >
+                    <div class="abbtl-cvf__modal abbtl-cvf__modal--wide" role="dialog" aria-modal="true" aria-labelledby="abbtl-cvf-bem-help-title">
+                        <header class="abbtl-cvf__modal-header">
+                            <div>
+                                <h2 id="abbtl-cvf-bem-help-title"><?php esc_html_e('B.E.M Awareness — How it works', 'ab-bricks-tools'); ?></h2>
+                                <p class="abbtl-cvf__modal-subtitle">
+                                    <?php esc_html_e('How the two toggles affect class renames and element labels.', 'ab-bricks-tools'); ?>
+                                </p>
+                            </div>
+                            <button type="button" class="abbtl-cvf__modal-close" @click="closeBemHelp()" aria-label="<?php echo esc_attr__('Close', 'ab-bricks-tools'); ?>">&times;</button>
+                        </header>
+
+                        <section class="abbtl-cvf__modal-body abbtl-cvf__bem-help">
+                            <h3><?php esc_html_e('BEM segments', 'ab-bricks-tools'); ?></h3>
+                            <p>
+                                <?php
+                                echo wp_kses(
+                                    __('Bricks Tools recognizes class names that follow the standard <strong>Block / Element / Modifier</strong> convention. <code>__</code> separates the block from the element. <code>--</code> separates the modifier from whatever comes before it. Words within a single segment use <code>-</code>. Classes that don\'t match this shape are treated as a single Block.', 'ab-bricks-tools'),
+                                    ['strong' => [], 'code' => []]
+                                );
+                                ?>
+                            </p>
+                            <table class="abbtl-cvf__help-table">
+                                <thead><tr><th><?php esc_html_e('Class', 'ab-bricks-tools'); ?></th><th><?php esc_html_e('Parsed as', 'ab-bricks-tools'); ?></th></tr></thead>
+                                <tbody>
+                                    <tr><td><code>.card</code></td><td><?php esc_html_e('Block only', 'ab-bricks-tools'); ?></td></tr>
+                                    <tr><td><code>.card__title</code></td><td><?php esc_html_e('Block + Element', 'ab-bricks-tools'); ?></td></tr>
+                                    <tr><td><code>.card--featured</code></td><td><?php esc_html_e('Block + Modifier', 'ab-bricks-tools'); ?></td></tr>
+                                    <tr><td><code>.card__title--big</code></td><td><?php esc_html_e('Block + Element + Modifier', 'ab-bricks-tools'); ?></td></tr>
+                                </tbody>
+                            </table>
+
+                            <h3><?php esc_html_e('Class propagation', 'ab-bricks-tools'); ?></h3>
+                            <p><strong><?php esc_html_e('"Rename related classes for BEM Elements"', 'ab-bricks-tools'); ?></strong></p>
+                            <p>
+                                <?php esc_html_e('When you rename a class, the tool compares the BEM segments of the OLD and NEW names:', 'ab-bricks-tools'); ?>
+                            </p>
+                            <ul>
+                                <li>
+                                    <?php
+                                    echo wp_kses(
+                                        __('<strong>Block segment changed</strong> → propagation fires. Every class in the same block family (the block-only class itself plus every <code>block__*</code> and <code>block--*</code> sibling) gets its leading block prefix swapped to the new block. Each sibling\'s own Element / Modifier portions are preserved.', 'ab-bricks-tools'),
+                                        ['strong' => [], 'code' => []]
+                                    );
+                                    ?>
+                                </li>
+                                <li>
+                                    <?php
+                                    echo wp_kses(
+                                        __('<strong>Block unchanged</strong> (only the Element or Modifier portion was edited) → only the one class renames. No siblings are touched.', 'ab-bricks-tools'),
+                                        ['strong' => []]
+                                    );
+                                    ?>
+                                </li>
+                            </ul>
+                            <p>
+                                <?php
+                                echo wp_kses(
+                                    __('Example: renaming <code>.card-04__title</code> to <code>.card__title</code> changes the Block (<code>card-04</code> → <code>card</code>). The tool also renames <code>.card-04</code>, <code>.card-04__image</code>, <code>.card-04--featured</code>, <code>.card-04__title--big</code>, etc.', 'ab-bricks-tools'),
+                                    ['code' => []]
+                                );
+                                ?>
+                            </p>
+                            <p>
+                                <?php esc_html_e('If any propagated rename would collide with an existing class, the whole transaction is rejected with a list of conflicting names — fix the conflicts (delete or rename them) and try again.', 'ab-bricks-tools'); ?>
+                            </p>
+                            <p>
+                                <?php esc_html_e('Before applying, a confirmation modal lists every class rename so you can verify or cancel.', 'ab-bricks-tools'); ?>
+                            </p>
+
+                            <h3><?php esc_html_e('Element label rewriting', 'ab-bricks-tools'); ?></h3>
+                            <p><strong><?php esc_html_e('"Rename matching element labels"', 'ab-bricks-tools'); ?></strong></p>
+                            <p>
+                                <?php esc_html_e('After classes are renamed, the tool can also rewrite element labels site-wide so they stay in sync. A label is rewritten only when ALL of these are true:', 'ab-bricks-tools'); ?>
+                            </p>
+                            <ol>
+                                <li><?php esc_html_e('The element uses one of the renamed classes (it appears in `settings._cssGlobalClasses`).', 'ab-bricks-tools'); ?></li>
+                                <li><?php esc_html_e('The element has a non-empty label.', 'ab-bricks-tools'); ?></li>
+                                <li><?php esc_html_e('The element\'s label normalize-matches the label derived from the OLD class name.', 'ab-bricks-tools'); ?></li>
+                            </ol>
+                            <p>
+                                <?php
+                                echo wp_kses(
+                                    __('"Normalize" means: strip any text enclosed in <code>(…)</code>, <code>[…]</code> or <code>{…}</code>, trim whitespace, lowercase, then join words with <code>-</code>. So <code>"Brand Card (left)"</code> normalizes to <code>brand-card</code>.', 'ab-bricks-tools'),
+                                    ['code' => []]
+                                );
+                                ?>
+                            </p>
+
+                            <h4><?php esc_html_e('How a label is derived from a class', 'ab-bricks-tools'); ?></h4>
+                            <table class="abbtl-cvf__help-table">
+                                <thead>
+                                    <tr>
+                                        <th><?php esc_html_e('Class shape', 'ab-bricks-tools'); ?></th>
+                                        <th><?php esc_html_e('Label uses', 'ab-bricks-tools'); ?></th>
+                                        <th><?php esc_html_e('Example', 'ab-bricks-tools'); ?></th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr><td><code>.card</code></td><td><?php esc_html_e('Block segment', 'ab-bricks-tools'); ?></td><td><code>Card</code></td></tr>
+                                    <tr><td><code>.card__title</code></td><td><?php esc_html_e('Element segment', 'ab-bricks-tools'); ?></td><td><code>Title</code></td></tr>
+                                    <tr><td><code>.card__title--big</code></td><td><?php esc_html_e('Element segment (M ignored)', 'ab-bricks-tools'); ?></td><td><code>Title</code></td></tr>
+                                    <tr><td><code>.card--featured</code></td><td><?php esc_html_e('Block segment (M ignored)', 'ab-bricks-tools'); ?></td><td><code>Card</code></td></tr>
+                                </tbody>
+                            </table>
+                            <p>
+                                <?php
+                                echo wp_kses(
+                                    __('Conversion: dashes within a segment become spaces; sentence case (first letter upper, rest lower). So <code>brand-card</code> → <code>Brand card</code>.', 'ab-bricks-tools'),
+                                    ['code' => []]
+                                );
+                                ?>
+                            </p>
+
+                            <h3><?php esc_html_e('Comments in labels are preserved', 'ab-bricks-tools'); ?></h3>
+                            <p>
+                                <?php
+                                echo wp_kses(
+                                    __('Anything enclosed in <code>(…)</code>, <code>[…]</code>, or <code>{…}</code> is treated as a label comment. Comments are stripped <em>before matching</em>, then re-inserted in their original position when the label is rewritten.', 'ab-bricks-tools'),
+                                    ['code' => [], 'em' => []]
+                                );
+                                ?>
+                            </p>
+                            <table class="abbtl-cvf__help-table">
+                                <thead>
+                                    <tr>
+                                        <th><?php esc_html_e('Before', 'ab-bricks-tools'); ?></th>
+                                        <th><?php esc_html_e('After', 'ab-bricks-tools'); ?></th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr><td><code>Brand Card</code></td><td><code>Tile card</code></td></tr>
+                                    <tr><td><code>Brand Card (left)</code></td><td><code>Tile card (left)</code></td></tr>
+                                    <tr><td><code>Brand Card [hero]</code></td><td><code>Tile card [hero]</code></td></tr>
+                                    <tr><td><code>Brand Card {variant 2}</code></td><td><code>Tile card {variant 2}</code></td></tr>
+                                </tbody>
+                            </table>
+                            <p class="abbtl-cvf__help-caption">
+                                <?php
+                                echo wp_kses(
+                                    __('All four cases come from renaming <code>.brand-card</code> to <code>.tile-card</code>.', 'ab-bricks-tools'),
+                                    ['code' => []]
+                                );
+                                ?>
+                            </p>
+
+                            <h3><?php esc_html_e('What is skipped', 'ab-bricks-tools'); ?></h3>
+                            <ul>
+                                <li><?php esc_html_e('Elements whose label was customized to something that doesn\'t normalize-match the OLD class\'s derived label. The tool assumes a custom label is intentional and leaves it alone.', 'ab-bricks-tools'); ?></li>
+                                <li><?php esc_html_e('Elements without a label at all (nothing to rewrite).', 'ab-bricks-tools'); ?></li>
+                                <li><?php esc_html_e('Post revisions, posts in the Trash, and auto-drafts (the scan ignores them).', 'ab-bricks-tools'); ?></li>
+                                <li><?php esc_html_e('Global Variables — variable renames have no UI yet, so BEM only applies to class renames.', 'ab-bricks-tools'); ?></li>
+                                <li><?php
+                                    echo wp_kses(
+                                        __('Multiple matches on one element: when several renamed classes appear on the same element, only the <strong>first</strong> match in <code>_cssGlobalClasses</code> order produces a label rewrite. One rewrite per element.', 'ab-bricks-tools'),
+                                        ['strong' => [], 'code' => []]
+                                    );
+                                ?></li>
+                                <li><?php esc_html_e('If both toggles are OFF, no propagation and no label rewrites happen — only the single class you targeted is renamed.', 'ab-bricks-tools'); ?></li>
+                            </ul>
+
+                            <h3><?php esc_html_e('Atomic + revertible', 'ab-bricks-tools'); ?></h3>
+                            <p>
+                                <?php esc_html_e('A BEM rename writes all affected classes in one transaction, producing exactly one entry in the Revisions list. Press Ctrl/Cmd+Z (or click Restore in the Revisions modal) to undo the whole batch.', 'ab-bricks-tools'); ?>
+                            </p>
+                        </section>
+
+                        <footer class="abbtl-cvf__modal-footer">
+                            <button type="button" class="button button-primary" @click="closeBemHelp()"><?php esc_html_e('Got it', 'ab-bricks-tools'); ?></button>
+                        </footer>
+                    </div>
+                </div>
             </div>
 
             <script>
@@ -1446,6 +1630,16 @@ final class Module implements ModuleInterface, HasAdminPage
                             saving: false,
                             error: '',
                             _resolver: null,
+                        },
+
+                        bemHelp: { open: false },
+
+                        openBemHelp() {
+                            this.bemHelp.open = true;
+                        },
+
+                        closeBemHelp() {
+                            this.bemHelp.open = false;
                         },
 
                         init() {
@@ -1586,7 +1780,7 @@ final class Module implements ModuleInterface, HasAdminPage
                             if (activeTab !== '<?php echo esc_js($this->getSlug()); ?>') return;
 
                             // Don't fire when any modal is open or we're mid-flight.
-                            if (this.classesModal.open || this.revisionsModal.open || this.renamePreview.open) return;
+                            if (this.classesModal.open || this.revisionsModal.open || this.renamePreview.open || this.bemHelp.open) return;
                             if (this._navigating) return;
 
                             event.preventDefault();

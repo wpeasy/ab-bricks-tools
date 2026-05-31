@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Bricks Tools
  * Description: A collection of Bricks Tools.
- * Version: 0.0.4
+ * Version: 0.0.5
  * Requires at least: 6.5
  * Requires PHP: 8.0
  * Author: AB
@@ -13,7 +13,7 @@ declare(strict_types=1);
 
 defined('ABSPATH') || exit;
 
-define('ABBTL_VERSION', '0.0.4');
+define('ABBTL_VERSION', '0.0.5');
 define('ABBTL_PLUGIN_FILE', __FILE__);
 define('ABBTL_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ABBTL_PLUGIN_URL', plugin_dir_url(__FILE__));
